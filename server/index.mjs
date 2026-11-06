@@ -450,15 +450,20 @@ const server = createServer(async (req, res) => {
     })
   }
 
-  // Шрифт страницы — VK Sans Display, как на панели. Без него телефон
-  // подставит системный, и страница разойдётся с макетом. Имя файла —
-  // только буквы, цифры и дефис: выйти за пределы sticker/fonts нельзя.
-  const font = req.method === 'GET' && url.pathname.match(/^\/fonts\/([\w-]+\.woff2)$/)
-  if (font) {
+  // Статика страницы: шрифт VK Sans Display (/fonts/) — без него телефон
+  // подставит системный — и значок MAX для сохраняемой картинки (/img/).
+  // Имя файла — только буквы, цифры и дефис: выйти за пределы sticker/fonts
+  // и sticker/img нельзя.
+  const asset = req.method === 'GET' && url.pathname.match(/^\/(fonts|img)\/([\w-]+)\.(woff2|png)$/)
+  if (asset) {
+    const [, dir, name, ext] = asset
     try {
-      return send(res, 200, await readFile(join(ROOT, 'sticker', 'fonts', font[1])), {
-        'content-type': 'font/woff2',
-        'cache-control': 'public, max-age=86400',
+      return send(res, 200, await readFile(join(ROOT, 'sticker', dir, `${name}.${ext}`)), {
+        'content-type': ext === 'png' ? 'image/png' : 'font/woff2',
+        // Шрифты не меняются — сутки в кэше. Картинку браузер перепроверяет
+        // при каждой загрузке: заменили значок — телефон сразу берёт новый,
+        // а не сутки рисует старый из кэша.
+        'cache-control': ext === 'png' ? 'no-cache' : 'public, max-age=86400',
       })
     } catch {
       return send(res, 404, 'не найдено')

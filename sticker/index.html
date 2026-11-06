@@ -276,10 +276,13 @@
 
   /*
    * Что сохраняем — не исходный квадрат, а как на странице: маскот в круге
-   * с градиентной рамкой, фон круга rgb(12, 1, 25), за кругом прозрачно (PNG).
+   * с градиентной рамкой, фон круга rgb(12, 1, 25). Вокруг круга — чёрный,
+   * справа снизу за кругом — значок MAX.
    */
-  const OUT = 1024 // сторона картинки, px: для аватарки и стикера с запасом
+  const OUT = 1080 // сторона картинки, px: для аватарки и стикера с запасом
   const BG = 'rgb(12, 1, 25)' // фон круга — как на странице и на панели
+  const OUTSIDE = '#000' // фон вокруг круга
+  const LOGO_SRC = 'img/max-icon.png' // новое имя — чтобы браузер не взял из кэша старый логотип
 
   function loadImage(url) {
     return new Promise((resolve, reject) => {
@@ -295,16 +298,26 @@
     // без CORS, и холст с ней браузер не дал бы выгрузить.
     const url = URL.createObjectURL(original)
     try {
-      const pic = await loadImage(url)
+      const [pic, logo] = await Promise.all([loadImage(url), loadImage(LOGO_SRC)])
       const c = document.createElement('canvas')
       c.width = c.height = OUT
       const g = c.getContext('2d')
 
-      // Круг вместе с рамкой — во всю картинку. Рамка той же толщины, что на
-      // странице: 8 px при круге 350.
+      g.fillStyle = OUTSIDE
+      g.fillRect(0, 0, OUT, OUT)
+
+      // Значок MAX — справа снизу. Рисуется первым, круг ложится поверх:
+      // значок выглядывает из-за круга.
+      const logoSize = OUT * 0.13
+      const logoMargin = OUT * (42 / 1080) // от правого и нижнего края: 42 px при 1080
+      const logoAt = OUT - logoMargin - logoSize
+      g.drawImage(logo, logoAt, logoAt, logoSize, logoSize)
+
+      // Круг вместе с рамкой — 84% стороны, по центру: в углу остаётся место
+      // под значок. Рамка той же толщины, что на странице: 8 px при круге 350.
       const cx = OUT / 2
       const cy = OUT / 2
-      const R = OUT / 2
+      const R = OUT * 0.42
       const ring = (2 * R * 8) / 350
 
       // Рамка — тот же градиент, что на странице, сверху вниз.
