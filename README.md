@@ -36,12 +36,15 @@ npm start
 2. **Тип сборки — Dockerfile**, путь `Dockerfile`.
 3. **Переменные окружения** (Environment):
    - `PUBLIC_URL` — адрес страницы с https, без слэша в конце, например
-     `https://mascot.alavenir.tech`;
+     `https://mascot.alavenir.space`;
    - `SHOT_TOKEN` — пароль. Тот же, что `VITE_STICKER_TOKEN` в
      `.env.local` панели.
 4. **Домен** (Domains): ваш адрес, путь `/`, порт контейнера `8787`,
    HTTPS включён, сертификат Let's Encrypt. Запись A для домена должна
-   смотреть на сервер Dokploy.
+   смотреть на сервер Dokploy — `dokploy.alavenir.space`, 177.1.183.240.
+   Поддомены `*.alavenir.space` уже ведут туда. А `*.alavenir.tech` ведёт
+   на другой сервер (177.1.183.241): там такой домен ответит 404 и
+   останется без сертификата.
 5. **Deploy**. Проверка: `https://<домен>/health` отвечает
    `{"ok":true,…}`.
 
@@ -58,7 +61,7 @@ npm start
 В `.env.local` панели (репозиторий MAX-Mascot-PO):
 
 ```
-VITE_STICKER_RELAY=https://mascot.alavenir.tech
+VITE_STICKER_RELAY=https://mascot.alavenir.space
 VITE_STICKER_TOKEN=<тот же SHOT_TOKEN>
 ```
 
