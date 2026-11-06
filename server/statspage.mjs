@@ -111,7 +111,8 @@ th,td{padding:8px 12px;text-align:left;white-space:nowrap;border-bottom:1px soli
 th{color:var(--muted);font-weight:400;font-size:13px}
 tr:last-child td{border-bottom:0}
 td.ok{color:var(--ok)} td.bad{color:var(--bad)} td.off{color:var(--off)} p.bad{color:var(--bad)}
-.login{display:flex;gap:8px;margin-top:20px;max-width:420px}
+.signin{max-width:420px;margin:22vh auto 0;text-align:center}
+.login{display:flex;gap:8px;margin-top:20px}
 .login input{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--ink);background:transparent;
   border:1px solid var(--line);border-radius:999px;padding:10px 16px}
 .login button{font:inherit;font-size:16px;color:#fff;background:var(--accent);border:0;border-radius:999px;padding:10px 20px}
@@ -128,11 +129,11 @@ function page(title, body) {
 
 /** Форма входа: только пароль. */
 export function renderSignIn(error) {
-  return page('Статистика генераций', `<h1>Статистика генераций</h1>
+  return page('Статистика генераций', `<main class="signin"><h1>Статистика генераций</h1>
 <form method="post" action="/stats/login" class="login">
 <input type="password" name="password" placeholder="Пароль" autocomplete="current-password" autofocus required>
 <button type="submit">Войти</button></form>
-${error ? `<p class="bad">${esc(error)}</p>` : ''}`)
+${error ? `<p class="bad">${esc(error)}</p>` : ''}</main>`)
 }
 
 /** Страница, когда показать нечего: база выключена или не отвечает. */
