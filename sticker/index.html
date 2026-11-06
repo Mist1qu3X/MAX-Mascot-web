@@ -276,12 +276,11 @@
 
   /*
    * Что сохраняем — не исходный квадрат, а как на странице: маскот в круге
-   * с градиентной рамкой, фон круга rgb(12, 1, 25). Вокруг круга — чёрный,
-   * справа снизу за кругом — значок MAX.
+   * с градиентной рамкой, фон круга rgb(12, 1, 25). Вокруг круга —
+   * прозрачно (PNG), справа снизу за кругом — значок MAX.
    */
   const OUT = 1080 // сторона картинки, px: для аватарки и стикера с запасом
   const BG = 'rgb(12, 1, 25)' // фон круга — как на странице и на панели
-  const OUTSIDE = '#000' // фон вокруг круга
   const LOGO_SRC = 'img/max-icon.png' // новое имя — чтобы браузер не взял из кэша старый логотип
 
   function loadImage(url) {
@@ -303,13 +302,10 @@
       c.width = c.height = OUT
       const g = c.getContext('2d')
 
-      g.fillStyle = OUTSIDE
-      g.fillRect(0, 0, OUT, OUT)
-
       // Значок MAX — справа снизу. Рисуется первым, круг ложится поверх:
       // значок выглядывает из-за круга.
       const logoSize = OUT * 0.13
-      const logoMargin = OUT * (42 / 1080) // от правого и нижнего края: 42 px при 1080
+      const logoMargin = OUT * (52 / 1080) // от правого и нижнего края: 52 px при 1080
       const logoAt = OUT - logoMargin - logoSize
       g.drawImage(logo, logoAt, logoAt, logoSize, logoSize)
 
