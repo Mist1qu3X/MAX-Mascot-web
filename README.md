@@ -36,7 +36,7 @@ npm start
 2. **Тип сборки — Dockerfile**, путь `Dockerfile`.
 3. **Переменные окружения** (Environment):
    - `PUBLIC_URL` — адрес страницы с https, без слэша в конце, например
-     `https://sticker.alavenir.tech`;
+     `https://mascot.alavenir.tech`;
    - `SHOT_TOKEN` — пароль. Тот же, что `VITE_STICKER_TOKEN` в
      `.env.local` панели.
 4. **Домен** (Domains): ваш адрес, путь `/`, порт контейнера `8787`,
@@ -58,7 +58,7 @@ npm start
 В `.env.local` панели (репозиторий MAX-Mascot-PO):
 
 ```
-VITE_STICKER_RELAY=https://sticker.alavenir.tech
+VITE_STICKER_RELAY=https://mascot.alavenir.tech
 VITE_STICKER_TOKEN=<тот же SHOT_TOKEN>
 ```
 
