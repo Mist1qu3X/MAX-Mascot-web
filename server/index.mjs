@@ -35,7 +35,8 @@ import { networkInterfaces } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { cleanRows, saveGenerations, startStats, statsEnabled, statsState } from './stats.mjs'
+import { allGenerations, cleanRows, readStats, saveGenerations, startStats, statsEnabled, statsState } from './stats.mjs'
+import { AUTH_HEADERS, authorized, renderCsv, renderStats, renderUnavailable, statsPageEnabled } from './statspage.mjs'
 
 const PORT = Number(process.env.PORT ?? 8787)
 /** Задан — значит сервер публичный и адреса строим от домена, а не от IP. */
@@ -304,6 +305,31 @@ const server = createServer(async (req, res) => {
       return send(res, 200, JSON.stringify({ saved, duplicates: rows.length - saved, rejected: total - rows.length }), json)
     } catch {
       return send(res, 503, JSON.stringify({ error: 'база недоступна' }), json)
+    }
+  }
+
+  // Страница статистики и выгрузка CSV — под паролем STATS_PASSWORD,
+  // см. server/statspage.mjs.
+  if (req.method === 'GET' && (url.pathname === '/stats' || url.pathname === '/stats.csv')) {
+    const text = { 'content-type': 'text/plain; charset=utf-8' }
+    if (!statsPageEnabled()) return send(res, 404, 'страница статистики выключена: не задан STATS_PASSWORD', text)
+    if (!(await authorized(req))) return send(res, 401, 'нужен пароль', AUTH_HEADERS)
+
+    const html = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+    if (!statsEnabled()) return send(res, 503, renderUnavailable(statsState()), html)
+    const source = url.searchParams.get('source') ?? ''
+    try {
+      if (url.pathname === '/stats.csv') {
+        return send(res, 200, renderCsv(await allGenerations({ source })), {
+          'content-type': 'text/csv; charset=utf-8',
+          'cache-control': 'no-store',
+          'content-disposition': 'attachment; filename="generations.csv"',
+        })
+      }
+      return send(res, 200, renderStats(await readStats({ source }), source), html)
+    } catch (error) {
+      console.error('[статистика] страница:', error?.message ?? error)
+      return send(res, 503, renderUnavailable(`${statsState()}, подробности в логе сервера`), html)
     }
   }
 

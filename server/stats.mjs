@@ -121,6 +121,52 @@ export function cleanRows(input) {
   })
 }
 
+/*
+ * Чтение — для страницы статистики (server/statspage.mjs). Дни считаем по
+ * Москве: CONVERT_TZ с числовым смещением работает и без таблиц часовых
+ * поясов в MySQL, а летнего времени в Москве нет.
+ */
+const MSK_DAY = "DATE_FORMAT(CONVERT_TZ(started_at, '+00:00', '+03:00'), '%Y-%m-%d')"
+const TOTALS = `COUNT(*) AS total,
+  SUM(status = 'success') AS success,
+  SUM(status LIKE 'error:%') AS errors,
+  SUM(status = 'cancelled') AS cancelled,
+  AVG(CASE WHEN status = 'success' THEN duration_s END) AS avg_s,
+  MIN(CASE WHEN status = 'success' THEN duration_s END) AS min_s,
+  MAX(CASE WHEN status = 'success' THEN duration_s END) AS max_s`
+
+/** `panel`, `web` или всё вместе. */
+function bySource(source, extra = '') {
+  const conditions = [source === 'panel' || source === 'web' ? 'source = ?' : '', extra].filter(Boolean)
+  return [conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', conditions[0] === 'source = ?' ? [source] : []]
+}
+
+/** Итоги, разбивка по дням и последние генерации. */
+export async function readStats({ source, limit = 200 } = {}) {
+  await ensureReady()
+  const [where, params] = bySource(source)
+  const [errorsWhere, errorsParams] = bySource(source, "status LIKE 'error:%'")
+  const [[totals]] = await pool.query(`SELECT ${TOTALS} FROM generations ${where}`, params)
+  const [errors] = await pool.query(
+    `SELECT status, COUNT(*) AS n FROM generations ${errorsWhere} GROUP BY status ORDER BY n DESC`, errorsParams)
+  const [days] = await pool.query(
+    `SELECT ${MSK_DAY} AS day, ${TOTALS} FROM generations ${where} GROUP BY day ORDER BY day DESC LIMIT 60`, params)
+  const [recent] = await pool.query(
+    `SELECT gen_no, source, started_at, finished_at, duration_s, status FROM generations ${where}
+     ORDER BY started_at DESC, id DESC LIMIT ?`, [...params, limit])
+  return { totals, errors, days, recent }
+}
+
+/** Все строки по порядку — для выгрузки в CSV. */
+export async function allGenerations({ source } = {}) {
+  await ensureReady()
+  const [where, params] = bySource(source)
+  const [rows] = await pool.query(
+    `SELECT gen_no, source, started_at, finished_at, duration_s, status FROM generations ${where}
+     ORDER BY started_at, id`, params)
+  return rows
+}
+
 /** Записать строки. Возвращает, сколько новых легло (повторы не считаются). */
 export async function saveGenerations(rows) {
   if (rows.length === 0) return 0
