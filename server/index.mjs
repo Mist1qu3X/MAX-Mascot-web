@@ -36,7 +36,10 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { allGenerations, cleanRows, readStats, saveGenerations, startStats, statsEnabled, statsState } from './stats.mjs'
-import { AUTH_HEADERS, authorized, renderCsv, renderStats, renderUnavailable, statsPageEnabled } from './statspage.mjs'
+import {
+  SIGN_OUT_COOKIE, passwordOk, renderCsv, renderSignIn, renderStats, renderUnavailable, signInCookie, signedIn,
+  statsPageEnabled,
+} from './statspage.mjs'
 
 const PORT = Number(process.env.PORT ?? 8787)
 /** Задан — значит сервер публичный и адреса строим от домена, а не от IP. */
@@ -310,23 +313,42 @@ const server = createServer(async (req, res) => {
 
   // Страница статистики и выгрузка CSV — под паролем STATS_PASSWORD,
   // см. server/statspage.mjs.
-  if (req.method === 'GET' && (url.pathname === '/stats' || url.pathname === '/stats.csv')) {
+  const statsPaths = ['/stats', '/stats.csv', '/stats/login', '/stats/logout']
+  if (statsPaths.includes(url.pathname) && (req.method === 'GET' || url.pathname === '/stats/login')) {
     const text = { 'content-type': 'text/plain; charset=utf-8' }
     if (!statsPageEnabled()) return send(res, 404, 'страница статистики выключена: не задан STATS_PASSWORD', text)
-    if (!(await authorized(req))) return send(res, 401, 'нужен пароль', AUTH_HEADERS)
-
     const html = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+
+    if (url.pathname === '/stats/login') {
+      if (req.method !== 'POST') return send(res, 303, '', { location: '/stats' })
+      const chunks = []
+      let size = 0
+      for await (const chunk of req) {
+        size += chunk.length
+        if (size > 2048) return send(res, 413, 'слишком длинно', text)
+        chunks.push(chunk)
+      }
+      const password = new URLSearchParams(Buffer.concat(chunks).toString()).get('password')
+      if (!(await passwordOk(password))) return send(res, 401, renderSignIn('Неверный пароль'), html)
+      return send(res, 303, '', { location: '/stats', 'set-cookie': signInCookie(req) })
+    }
+    if (url.pathname === '/stats/logout') {
+      return send(res, 303, '', { location: '/stats', 'set-cookie': SIGN_OUT_COOKIE })
+    }
+    if (!signedIn(req)) {
+      return url.pathname === '/stats' ? send(res, 401, renderSignIn(), html) : send(res, 303, '', { location: '/stats' })
+    }
+
     if (!statsEnabled()) return send(res, 503, renderUnavailable(statsState()), html)
-    const source = url.searchParams.get('source') ?? ''
     try {
       if (url.pathname === '/stats.csv') {
-        return send(res, 200, renderCsv(await allGenerations({ source })), {
+        return send(res, 200, renderCsv(await allGenerations()), {
           'content-type': 'text/csv; charset=utf-8',
           'cache-control': 'no-store',
           'content-disposition': 'attachment; filename="generations.csv"',
         })
       }
-      return send(res, 200, renderStats(await readStats({ source }), source), html)
+      return send(res, 200, renderStats(await readStats()), html)
     } catch (error) {
       console.error('[статистика] страница:', error?.message ?? error)
       return send(res, 503, renderUnavailable(`${statsState()}, подробности в логе сервера`), html)

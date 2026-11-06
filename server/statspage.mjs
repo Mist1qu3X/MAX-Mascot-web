@@ -4,11 +4,15 @@
  * Простая, без скриптов: сервер рисует HTML из базы на каждый запрос.
  * Время — московское: смотрят люди на мероприятии, а в базе лежит UTC.
  *
- * Пароль — переменная STATS_PASSWORD, вход через стандартное окно браузера
- * (HTTP Basic): имя любое, пароль — из переменной. В коде пароля нет:
- * репозиторий публичный. Не задана переменная — страница выключена.
+ * Вход — своя форма с одним полем пароля (стандартное окно браузера
+ * обязательно спрашивает ещё и имя). Пароль — переменная STATS_PASSWORD:
+ * в коде его нет, репозиторий публичный. Не задана — страница выключена.
+ *
+ * После входа браузер получает подписанную куку на 14 дней. Подпись
+ * считается от пароля: сменили пароль — все старые входы недействительны,
+ * а перезапуск сервера их не сбрасывает.
  */
-import { randomBytes, scrypt, scryptSync, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, scrypt, scryptSync, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
 
 const scryptAsync = promisify(scrypt)
@@ -17,27 +21,43 @@ const PASSWORD = process.env.STATS_PASSWORD ?? ''
 // время независимо от того, сколько символов совпало.
 const SALT = randomBytes(16)
 const EXPECTED = PASSWORD ? scryptSync(PASSWORD, SALT, 32) : null
+const SESSION_KEY = PASSWORD ? scryptSync(PASSWORD, 'max-stats-session', 32) : null
+const SESSION_DAYS = 14
+const COOKIE = 'stats_session'
 
 export function statsPageEnabled() {
   return Boolean(PASSWORD)
 }
 
-/** Верный ли пароль в заголовке. Неверный — с секундной паузой от перебора. */
-export async function authorized(req) {
-  const header = req.headers.authorization ?? ''
-  if (!EXPECTED || !header.startsWith('Basic ')) return false
-  const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8')
-  const password = decoded.slice(decoded.indexOf(':') + 1)
-  const ok = timingSafeEqual(await scryptAsync(password, SALT, 32), EXPECTED)
+/** Верный ли пароль. Неверный — с секундной паузой от перебора. */
+export async function passwordOk(password) {
+  if (!EXPECTED) return false
+  const ok = timingSafeEqual(await scryptAsync(String(password ?? ''), SALT, 32), EXPECTED)
   if (!ok) await new Promise((r) => setTimeout(r, 1000))
   return ok
 }
 
-export const AUTH_HEADERS = {
-  'www-authenticate': 'Basic realm="MAX stats", charset="UTF-8"',
-  'content-type': 'text/plain; charset=utf-8',
-  'cache-control': 'no-store',
+const sign = (value) => createHmac('sha256', SESSION_KEY).update(value).digest('base64url')
+
+/** Есть ли у браузера действующий вход. */
+export function signedIn(req) {
+  if (!SESSION_KEY) return false
+  const value = (req.headers.cookie ?? '').split(/;\s*/)
+    .find((part) => part.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1) ?? ''
+  const [expires, signature] = value.split('.')
+  if (!expires || !signature || Number(expires) < Date.now()) return false
+  const expected = sign(expires)
+  return signature.length === expected.length && timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
 }
+
+/** Кука входа. Secure — когда пришли по https (за Traefik это x-forwarded-proto). */
+export function signInCookie(req) {
+  const expires = String(Date.now() + SESSION_DAYS * 86_400_000)
+  const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''
+  return `${COOKIE}=${expires}.${sign(expires)}; Path=/; Max-Age=${SESSION_DAYS * 86_400}; HttpOnly; SameSite=Strict${secure}`
+}
+
+export const SIGN_OUT_COOKIE = `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict`
 
 const STATUS = {
   success: 'успех',
@@ -49,7 +69,6 @@ const STATUS = {
   'error:timeout': 'ошибка: не уложились по времени',
   'error:api': 'ошибка: сбой сервиса',
 }
-const SOURCE = { panel: 'панель', web: 'сайт' }
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 const num = (value) => (value === null || value === undefined ? null : Number(value))
@@ -80,8 +99,7 @@ h1{font-size:26px;margin:0 0 4px;font-weight:600}
 h2{font-size:18px;margin:28px 0 10px;font-weight:600}
 .muted{color:var(--muted);margin:0}
 nav{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 4px}
-nav a{color:var(--ink);text-decoration:none;padding:7px 14px;border-radius:999px;border:1px solid var(--line)}
-nav a.on{background:var(--accent);border-color:var(--accent)}
+nav a{color:var(--ink);text-decoration:none;padding:7px 14px;border-radius:999px;background:var(--accent)}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:16px}
 .card{border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .card b{display:block;font-size:26px;font-weight:600}
@@ -92,7 +110,13 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
 th,td{padding:8px 12px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line)}
 th{color:var(--muted);font-weight:400;font-size:13px}
 tr:last-child td{border-bottom:0}
-td.ok{color:var(--ok)} td.bad{color:var(--bad)} td.off{color:var(--off)}
+td.ok{color:var(--ok)} td.bad{color:var(--bad)} td.off{color:var(--off)} p.bad{color:var(--bad)}
+.login{display:flex;gap:8px;margin-top:20px;max-width:420px}
+.login input{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--ink);background:transparent;
+  border:1px solid var(--line);border-radius:999px;padding:10px 16px}
+.login button{font:inherit;font-size:16px;color:#fff;background:var(--accent);border:0;border-radius:999px;padding:10px 20px}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.top a{color:var(--muted);font-size:14px}
 .r{text-align:right}
 `
 
@@ -102,16 +126,23 @@ function page(title, body) {
 <title>${esc(title)}</title><style>${STYLE}</style></head><body>${body}</body></html>`
 }
 
+/** Форма входа: только пароль. */
+export function renderSignIn(error) {
+  return page('Статистика генераций', `<h1>Статистика генераций</h1>
+<form method="post" action="/stats/login" class="login">
+<input type="password" name="password" placeholder="Пароль" autocomplete="current-password" autofocus required>
+<button type="submit">Войти</button></form>
+${error ? `<p class="bad">${esc(error)}</p>` : ''}`)
+}
+
 /** Страница, когда показать нечего: база выключена или не отвечает. */
 export function renderUnavailable(state) {
   return page('Статистика генераций', `<h1>Статистика генераций</h1>
 <p class="muted">База статистики недоступна: ${esc(state)}. Строки с панели не теряются — она пришлёт их, когда база ответит.</p>`)
 }
 
-export function renderStats({ totals, errors, days, recent }, source) {
+export function renderStats({ totals, errors, days, recent }) {
   const total = num(totals.total) ?? 0
-  const filter = source === 'panel' || source === 'web' ? source : ''
-  const link = (value, label) => `<a href="/stats${value ? `?source=${value}` : ''}"${value === filter ? ' class="on"' : ''}>${label}</a>`
   const now = msk(new Date())
 
   const cards = [
@@ -134,20 +165,19 @@ export function renderStats({ totals, errors, days, recent }, source) {
   const recentRows = recent.map((r) => {
     const start = msk(r.started_at)
     const end = msk(r.finished_at)
-    return `<tr><td class="r">${num(r.gen_no)}</td><td>${esc(SOURCE[r.source] ?? r.source)}</td>
-<td>${start.day} ${start.time}</td><td>${end.time}</td><td class="r">${seconds(r.duration_s)}</td>${statusCell(r.status)}</tr>`
+    return `<tr><td class="r">${num(r.gen_no)}</td><td>${start.day}</td><td>${start.time}</td>
+<td>${end.time}</td><td class="r">${seconds(r.duration_s)}</td>${statusCell(r.status)}</tr>`
   }).join('')
 
-  return page('Статистика генераций', `<h1>Статистика генераций</h1>
+  return page('Статистика генераций', `<div class="top"><h1>Статистика генераций</h1><a href="/stats/logout">выйти</a></div>
 <p class="muted">Время московское. Обновлено ${now.day} в ${now.time} — обновите страницу, чтобы увидеть новые.</p>
-<nav>${link('', 'Все')}${link('panel', 'Панель')}${link('web', 'Сайт')}
-<a href="/stats.csv${filter ? `?source=${filter}` : ''}">Скачать CSV</a></nav>
+<nav><a href="/stats.csv">Скачать CSV</a></nav>
 <div class="cards">${cards}</div>${errorLine}
 <h2>По дням</h2>
 ${days.length ? `<div class="scroll"><table><tr><th>день</th><th class="r">всего</th><th class="r">успех</th>
 <th class="r">ошибки</th><th class="r">прервано</th><th class="r">среднее, с</th></tr>${dayRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}
 <h2>Последние генерации</h2>
-${recent.length ? `<div class="scroll"><table><tr><th class="r">№</th><th>откуда</th><th>начало</th><th>конец</th>
+${recent.length ? `<div class="scroll"><table><tr><th class="r">№</th><th>дата</th><th>начало</th><th>конец</th>
 <th class="r">длит., с</th><th>статус</th></tr>${recentRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}`)
 }
 
@@ -156,8 +186,7 @@ export function renderCsv(rows) {
   const lines = rows.map((r) => {
     const start = msk(r.started_at)
     const end = msk(r.finished_at)
-    return [num(r.gen_no), SOURCE[r.source] ?? r.source, `${start.day} ${start.time}`, `${end.day} ${end.time}`,
-      seconds(r.duration_s), STATUS[r.status] ?? r.status].join(';')
+    return [num(r.gen_no), start.day, start.time, end.time, seconds(r.duration_s), STATUS[r.status] ?? r.status].join(';')
   })
-  return '﻿' + ['номер;откуда;начало;конец;длительность, с;статус', ...lines].join('\r\n') + '\r\n'
+  return '﻿' + ['номер;дата;начало;конец;длительность, с;статус', ...lines].join('\r\n') + '\r\n'
 }

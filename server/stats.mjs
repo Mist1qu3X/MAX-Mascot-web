@@ -135,35 +135,25 @@ const TOTALS = `COUNT(*) AS total,
   MIN(CASE WHEN status = 'success' THEN duration_s END) AS min_s,
   MAX(CASE WHEN status = 'success' THEN duration_s END) AS max_s`
 
-/** `panel`, `web` или всё вместе. */
-function bySource(source, extra = '') {
-  const conditions = [source === 'panel' || source === 'web' ? 'source = ?' : '', extra].filter(Boolean)
-  return [conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', conditions[0] === 'source = ?' ? [source] : []]
-}
-
-/** Итоги, разбивка по дням и последние генерации. */
-export async function readStats({ source, limit = 200 } = {}) {
+/** Итоги, разбивка по дням и последние генерации — панель и сайт вместе. */
+export async function readStats({ limit = 200 } = {}) {
   await ensureReady()
-  const [where, params] = bySource(source)
-  const [errorsWhere, errorsParams] = bySource(source, "status LIKE 'error:%'")
-  const [[totals]] = await pool.query(`SELECT ${TOTALS} FROM generations ${where}`, params)
+  const [[totals]] = await pool.query(`SELECT ${TOTALS} FROM generations`)
   const [errors] = await pool.query(
-    `SELECT status, COUNT(*) AS n FROM generations ${errorsWhere} GROUP BY status ORDER BY n DESC`, errorsParams)
+    "SELECT status, COUNT(*) AS n FROM generations WHERE status LIKE 'error:%' GROUP BY status ORDER BY n DESC")
   const [days] = await pool.query(
-    `SELECT ${MSK_DAY} AS day, ${TOTALS} FROM generations ${where} GROUP BY day ORDER BY day DESC LIMIT 60`, params)
+    `SELECT ${MSK_DAY} AS day, ${TOTALS} FROM generations GROUP BY day ORDER BY day DESC LIMIT 60`)
   const [recent] = await pool.query(
-    `SELECT gen_no, source, started_at, finished_at, duration_s, status FROM generations ${where}
-     ORDER BY started_at DESC, id DESC LIMIT ?`, [...params, limit])
+    `SELECT gen_no, started_at, finished_at, duration_s, status FROM generations
+     ORDER BY started_at DESC, id DESC LIMIT ?`, [limit])
   return { totals, errors, days, recent }
 }
 
 /** Все строки по порядку — для выгрузки в CSV. */
-export async function allGenerations({ source } = {}) {
+export async function allGenerations() {
   await ensureReady()
-  const [where, params] = bySource(source)
   const [rows] = await pool.query(
-    `SELECT gen_no, source, started_at, finished_at, duration_s, status FROM generations ${where}
-     ORDER BY started_at, id`, params)
+    'SELECT gen_no, started_at, finished_at, duration_s, status FROM generations ORDER BY started_at, id')
   return rows
 }
 
