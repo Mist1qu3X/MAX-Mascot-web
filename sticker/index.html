@@ -276,12 +276,13 @@
 
   /*
    * Что сохраняем — не исходный квадрат, а как на странице: маскот в круге
-   * с градиентной рамкой, фон круга rgb(12, 1, 25). Вокруг круга —
-   * прозрачно (PNG), справа снизу за кругом — значок MAX.
+   * с градиентной рамкой, фон круга rgb(12, 1, 25). Вокруг круга — тёмный
+   * фон страницы, справа снизу — белый логотип MAX с надписью.
    */
   const OUT = 1080 // сторона картинки, px: для аватарки и стикера с запасом
   const BG = 'rgb(12, 1, 25)' // фон круга — как на странице и на панели
-  const LOGO_SRC = 'img/max-icon.png' // новое имя — чтобы браузер не взял из кэша старый логотип
+  const OUTSIDE = '#0d001a' // фон вокруг круга — как у страницы (--void)
+  const LOGO_SRC = 'img/max-logo-white.png' // новое имя — чтобы браузер не взял из кэша старый значок
 
   function loadImage(url) {
     return new Promise((resolve, reject) => {
@@ -301,16 +302,17 @@
       const c = document.createElement('canvas')
       c.width = c.height = OUT
       const g = c.getContext('2d')
+      // Логотип ужимается втрое — просим сглаживание получше, иначе в Safari
+      // у букв может появиться лесенка. Chrome рисует одинаково с ним и без.
+      g.imageSmoothingQuality = 'high'
 
-      // Значок MAX — справа снизу. Рисуется первым, круг ложится поверх:
-      // значок выглядывает из-за круга.
-      const logoSize = OUT * 0.13
-      const logoMargin = OUT * (52 / 1080) // от правого и нижнего края: 52 px при 1080
-      const logoAt = OUT - logoMargin - logoSize
-      g.drawImage(logo, logoAt, logoAt, logoSize, logoSize)
+      // Тёмный фон под всем: логотип белый, на прозрачном его не было бы
+      // видно в светлой галерее или чате.
+      g.fillStyle = OUTSIDE
+      g.fillRect(0, 0, OUT, OUT)
 
       // Круг вместе с рамкой — 84% стороны, по центру: в углу остаётся место
-      // под значок. Рамка той же толщины, что на странице: 8 px при круге 350.
+      // под логотип. Рамка той же толщины, что на странице: 8 px при круге 350.
       const cx = OUT / 2
       const cy = OUT / 2
       const R = OUT * 0.42
@@ -341,6 +343,14 @@
       const h = pic.naturalHeight * s
       g.drawImage(pic, cx - w / 2, cy - h / 2, w, h)
       g.restore()
+
+      // Логотип MAX — справа снизу, целиком снаружи круга: надпись нельзя
+      // прятать за рамку, как прятали угол значка. При ширине 240 от букв до
+      // рамки ~40 px; около 295 логотип упрётся в круг.
+      const logoW = OUT * (240 / 1080)
+      const logoH = (logoW * logo.naturalHeight) / logo.naturalWidth
+      const logoMargin = OUT * (52 / 1080) // от правого и нижнего края: 52 px при 1080
+      g.drawImage(logo, OUT - logoMargin - logoW, OUT - logoMargin - logoH, logoW, logoH)
 
       return await new Promise((resolve, reject) =>
         c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob'))), 'image/png'))
