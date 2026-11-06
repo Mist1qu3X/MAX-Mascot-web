@@ -1,0 +1,8 @@
+# В образ копируются только server/ и sticker/ — остальное серверу не нужно.
+.git
+.gitignore
+.env
+.env.*
+node_modules
+*.md
+.DS_Store

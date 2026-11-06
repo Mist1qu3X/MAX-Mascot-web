@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ваш маскот — MAX</title>
+<style>
+  /* Шрифт — как на панели. Файлы лежат в sticker/fonts, сервер отдаёт их
+     по /fonts/…; путь относительный, чтобы страница открывалась и из
+     дев-сервера панели (npm run dev:mock, /sticker/index.html). */
+  @font-face{font-family:'VK Sans Display';font-weight:400;font-display:swap;
+    src:url('fonts/VKSansDisplay-regular.woff2') format('woff2')}
+  @font-face{font-family:'VK Sans Display';font-weight:500;font-display:swap;
+    src:url('fonts/VKSansDisplay-medium.woff2') format('woff2')}
+  @font-face{font-family:'VK Sans Display';font-weight:600;font-display:swap;
+    src:url('fonts/VKSansDisplay-demibold.woff2') format('woff2')}
+  @font-face{font-family:'VK Sans Display';font-weight:700;font-display:swap;
+    src:url('fonts/VKSansDisplay-bold.woff2') format('woff2')}
+  :root{
+    --void:#0d001a; --ink:#fff; --muted:rgb(255 255 255/.62);
+    --brand:linear-gradient(90deg,#a22bdf 0%,#7a36ff 25%,#547eff 50%,#30c4ff 75%,#27b2ff 100%);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--void);color:var(--ink);
+    font-family:'VK Sans Display',-apple-system,'Helvetica Neue',sans-serif;
+    /* ss01 — фирменные знаки, в частности «а» без шпоры. Как на панели. */
+    font-feature-settings:'ss01' 1;
+    -webkit-font-smoothing:antialiased}
+  /* Сверху 82 — от края страницы до заголовка. */
+  body{padding:82px 20px 48px;max-width:560px;margin-inline:auto;
+    background:
+      radial-gradient(ellipse 90% 46% at 20% -6%, rgb(40 139 255/.55) 0%, rgb(40 139 255/0) 70%),
+      radial-gradient(ellipse 80% 44% at 86% -4%, rgb(155 7 255/.6) 0%, rgb(155 7 255/0) 70%),
+      var(--void);
+    background-attachment:fixed}
+  h1{font-size:34px;line-height:1.1;margin:0 0 8px;font-weight:700}
+  /* clone — градиент начинается заново на каждой строке, как в макете;
+     без него «маскот» на второй строке целиком уходил в голубой хвост. */
+  h1 b{background:var(--brand);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:700;
+    -webkit-box-decoration-break:clone;box-decoration-break:clone}
+  /* Трекинг (letter-spacing) здесь и ниже подобран по макету: кегли там те же,
+     а строки плотнее — от этого зависят переносы. */
+  .lead{color:var(--muted);font-size:17px;line-height:1.45;margin:0 0 22px;letter-spacing:-.013em}
+  /* Круг с маскотом, как на экране результата панели: кольцо-градиент
+     подложкой под паддингом, внутри круглое окно. */
+  .card{position:relative;border-radius:50%;padding:8px;
+    background:linear-gradient(180deg,#8f02ff 0%,#1a87ff 100%);margin-bottom:20px}
+  .inner{border-radius:50%;background:var(--void);overflow:hidden;aspect-ratio:1;
+    display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center}
+  .wait{color:var(--muted);font-size:14px;line-height:1.4;text-align:center;margin:0;padding:0 22px;max-width:76%}
+  .inner img{width:100%;height:100%;object-fit:cover;display:block}
+  .spin{width:38px;height:38px;border:4px solid rgb(255 255 255/.18);border-top-color:#7a36ff;
+    border-radius:50%;animation:r 900ms linear infinite}
+  @keyframes r{to{transform:rotate(360deg)}}
+  .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;
+    padding:18px 20px;border:0;border-radius:999px;font:inherit;font-size:19px;font-weight:600;
+    color:#fff;cursor:pointer;text-decoration:none;margin-bottom:12px;letter-spacing:-.028em;
+    /* Длинная подпись («Создать стикер…») встаёт в две строки — по центру. */
+    text-align:center;line-height:1.25}
+  .primary{background:var(--brand)}
+  .ghost{background:rgb(255 255 255/.09);border:1px solid rgb(255 255 255/.16)}
+  .btn:disabled{opacity:.45}
+  .hint{color:var(--muted);font-size:14px;line-height:1.45;margin:0 0 28px;text-align:center;letter-spacing:-.024em}
+  ol{margin:0;padding:0;list-style:none;counter-reset:s}
+  li{counter-increment:s;position:relative;padding:0 0 22px 52px;color:var(--muted);
+    font-size:16px;line-height:1.45;letter-spacing:-.033em}
+  li::before{content:counter(s);position:absolute;left:0;top:-3px;width:34px;height:34px;
+    border-radius:50%;background:rgb(255 255 255/.09);border:1px solid rgb(255 255 255/.16);
+    display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff}
+  li b{color:#fff;font-weight:600}
+  h2{font-size:22px;margin:8px 0 20px;font-weight:700;letter-spacing:-.02em}
+  /* Поле справа — по макету: там примечание не доходит до края,
+     и переносы встают иначе («не нужно. / Ссылка временная…»). */
+  .note{border-left:3px solid #7a36ff;padding:2px 60px 2px 14px;margin:4px 0 26px;
+    color:var(--muted);font-size:14px;line-height:1.45;letter-spacing:-.021em}
+  .err{max-width:76%;padding:18px;border-radius:16px;background:rgb(255 90 90/.12);
+    border:1px solid rgb(255 90 90/.3);color:#ffb3b3;font-size:15px;line-height:1.4}
+</style>
+</head>
+<body>
+
+<!-- Русский текст лежит прямо в разметке: он же язык по умолчанию, и если
+     скрипт не отработает, страница останется читаемой. Английский подставляет
+     applyLang() из словаря ниже. -->
+<!-- Неразрывные пробелы после коротких слов и перед тире — чтобы «в», «и»,
+     «на» не висели в конце строки. Переносы в макете стоят именно так. -->
+<h1 data-t="h1">Ваш <b>цифровой маскот</b></h1>
+<p class="lead" data-t="lead">Сохраните картинку и&nbsp;добавьте её аватаром в&nbsp;MAX&nbsp;— это пара минут</p>
+
+<div class="card"><div class="inner" id="frame"><div class="spin"></div></div></div>
+
+<button class="btn primary" id="save" disabled data-t="save">Сохранить картинку</button>
+<a class="btn ghost" id="bot" href="https://max.ru/stickers" target="_blank" rel="noopener" data-t="bot">Создать стикер с&nbsp;цифровым аватаром в&nbsp;MAX</a>
+<p class="hint" id="hint" data-t="hintDefault">Если кнопка не&nbsp;сработала&nbsp;— задержите палец на&nbsp;картинке и&nbsp;выберите «Сохранить в&nbsp;Фото»</p>
+
+<h2 data-t="h2">Как сделать стикер</h2>
+<ol>
+  <li data-t="step1"><b>Сохраните картинку</b> кнопкой выше&nbsp;— она попадёт в&nbsp;галерею телефона</li>
+  <li data-t="step2"><b>Откройте бот</b> кнопкой «Создать стикер» выше. Или найдите в&nbsp;поиске MAX
+      <b>«Стикеры в&nbsp;MAX»</b>&nbsp;— официальный бот&nbsp;с&nbsp;синей галочкой</li>
+  <li data-t="step3">Нажмите <b>«Начать»</b>, затем <b>«Создать набор»</b> и&nbsp;придумайте название</li>
+  <li data-t="step4"><b>Загрузите сохранённую картинку</b> из&nbsp;галереи и&nbsp;отправьте набор на&nbsp;проверку</li>
+  <li data-t="step5">Готово&nbsp;— набор появится у&nbsp;вас в&nbsp;стикерах, им можно делиться</li>
+</ol>
+
+<p class="note" data-t="note">Картинка уже подходит боту по&nbsp;формату и&nbsp;размеру, дорабатывать её не&nbsp;нужно. Ссылка временная и&nbsp;живёт только пока вы рядом с&nbsp;панелью&nbsp;— сохраните сейчас</p>
+
+<script>
+(function () {
+  /**
+   * Тексты двух языков — как в `src/i18n.tsx` на панели, включая терминологию:
+   * «digital mascot», «Stickers in MAX» с типографскими кавычками.
+   *
+   * Ключи с `data-t` подставляются в разметку, остальные берёт код по ходу
+   * работы: ожидание, ошибки, подсказки после сохранения.
+   */
+  const TEXTS = {
+    ru: {
+      title: 'Ваш маскот — MAX',
+      h1: 'Ваш <b>цифровой маскот</b>',
+      lead: 'Сохраните картинку и&nbsp;добавьте её аватаром в&nbsp;MAX&nbsp;— это пара минут',
+      save: 'Сохранить картинку',
+      bot: 'Создать стикер с&nbsp;цифровым аватаром в&nbsp;MAX',
+      h2: 'Как сделать стикер',
+      step1: '<b>Сохраните картинку</b> кнопкой выше&nbsp;— она попадёт в&nbsp;галерею телефона',
+      step2: '<b>Откройте бот</b> кнопкой «Создать стикер» выше. Или найдите в&nbsp;поиске MAX ' +
+             '<b>«Стикеры в&nbsp;MAX»</b>&nbsp;— официальный бот&nbsp;с&nbsp;синей галочкой',
+      step3: 'Нажмите <b>«Начать»</b>, затем <b>«Создать набор»</b> и&nbsp;придумайте название',
+      step4: '<b>Загрузите сохранённую картинку</b> из&nbsp;галереи и&nbsp;отправьте набор на&nbsp;проверку',
+      step5: 'Готово&nbsp;— набор появится у&nbsp;вас в&nbsp;стикерах, им можно делиться',
+      note: 'Картинка уже подходит боту по&nbsp;формату и&nbsp;размеру, дорабатывать её не&nbsp;нужно. ' +
+            'Ссылка временная и&nbsp;живёт только пока вы рядом с&nbsp;панелью&nbsp;— сохраните сейчас',
+
+      mascotAlt: 'Ваш маскот',
+      preparing: 'Готовим…',
+      wait: 'Картинка ещё готовится&nbsp;— это занимает несколько секунд.',
+      errLink: 'Ссылка неполная&nbsp;— отсканируйте QR-код с&nbsp;экрана ещё раз.',
+      errImage: 'Картинка недоступна&nbsp;— возможно, срок ссылки истёк.',
+      hintDefault: 'Если кнопка не&nbsp;сработала&nbsp;— задержите палец на&nbsp;картинке и&nbsp;выберите «Сохранить в&nbsp;Фото»',
+      hintShare: 'В&nbsp;меню выберите «Сохранить изображение»',
+      hintSaved: 'Картинка сохранена в&nbsp;загрузки телефона',
+      hintNewTab: 'Картинка открылась в&nbsp;новой вкладке&nbsp;— задержите на&nbsp;ней палец и&nbsp;выберите «Сохранить в&nbsp;Фото»',
+    },
+    en: {
+      title: 'Your mascot — MAX',
+      h1: 'Your <b>digital mascot</b>',
+      lead: 'Save the image and add it as your avatar in MAX&nbsp;— it only takes a couple of minutes',
+      save: 'Save the image',
+      bot: 'Create a sticker with your digital avatar in MAX',
+      h2: 'How to make a sticker',
+      step1: '<b>Save the image</b> with the button above&nbsp;— it goes to your phone’s gallery',
+      step2: '<b>Open the bot</b> with the button above. Or search MAX for ' +
+             '<b>“Stickers in MAX”</b>&nbsp;— the official bot with a blue check mark',
+      step3: 'Tap <b>“Start”</b>, then <b>“Create a set”</b> and think up a name',
+      step4: '<b>Upload the saved image</b> from your gallery and send the set for review',
+      step5: 'Done&nbsp;— the set appears in your stickers and you can share it',
+      note: 'The image already fits the bot’s format and size, no editing needed. ' +
+            'The link is temporary and lives only while you are near the panel&nbsp;— save it now',
+
+      mascotAlt: 'Your mascot',
+      preparing: 'Preparing…',
+      wait: 'The image is still being prepared&nbsp;— this takes a few seconds.',
+      errLink: 'The link is incomplete&nbsp;— scan the QR code on the screen again.',
+      errImage: 'The image is unavailable&nbsp;— the link may have expired.',
+      hintDefault: 'If the button didn’t work, press and hold the image and choose “Save to Photos”',
+      hintShare: 'Choose “Save Image” in the menu',
+      hintSaved: 'The image has been saved to your phone’s downloads',
+      hintNewTab: 'The image opened in a new tab&nbsp;— press and hold it and choose “Save to Photos”',
+    },
+  }
+
+  const q = new URLSearchParams(location.search)
+
+  /**
+   * Кнопки выбора языка на странице нет. `?lang=` задаёт язык явно, иначе
+   * берём язык телефона: он личный, и о владельце знает больше, чем язык,
+   * на котором кто-то оставил панель после себя.
+   */
+  function initialLang() {
+    const asked = (q.get('lang') || '').toLowerCase()
+    if (asked === 'en' || asked === 'ru') return asked
+    const nav = (navigator.languages && navigator.languages[0]) || navigator.language || ''
+    return nav.toLowerCase().startsWith('ru') ? 'ru' : 'en'
+  }
+
+  let lang = initialLang()
+  let T = TEXTS[lang]
+
+  const frame = document.getElementById('frame')
+  const save = document.getElementById('save')
+  const hint = document.getElementById('hint')
+  const bot = document.getElementById('bot')
+  if (q.get('bot')) bot.href = q.get('bot')
+
+  /**
+   * Что сейчас в рамке и в подсказке — чтобы при смене языка перерисовать их
+   * на актуальном тексте, а не откатить к исходному.
+   */
+  let frameState = 'spin'
+  let hintKey = 'hintDefault'
+  let busy = false
+
+  function renderFrame() {
+    if (frameState === 'img') return // в рамке картинка, текста там нет
+    if (frameState === 'errLink' || frameState === 'errImage') {
+      frame.innerHTML = '<div class="err">' + T[frameState] + '</div>'
+      return
+    }
+    frame.innerHTML = '<div class="spin"></div>' +
+      (frameState === 'wait' ? '<p class="wait">' + T.wait + '</p>' : '')
+  }
+
+  function applyLang(next) {
+    lang = next
+    T = TEXTS[lang]
+    document.documentElement.lang = lang
+    document.title = T.title
+    for (const el of document.querySelectorAll('[data-t]')) {
+      const key = el.dataset.t
+      if (T[key] != null) el.innerHTML = T[key]
+    }
+    if (!busy) save.textContent = T.save
+    hint.innerHTML = T[hintKey] // в текстах &nbsp; — нужен innerHTML; строки только из словаря выше
+    const shown = frame.querySelector('img')
+    if (shown) shown.alt = T.mascotAlt
+    else renderFrame()
+  }
+
+  applyLang(lang)
+
+  const src = q.get('i')
+  if (!src) {
+    frameState = 'errLink'
+    renderFrame()
+    return
+  }
+
+  // Без crossOrigin: kie.ai отдаёт результат с двух разных хостов, и на одном
+  // из них нет CORS-заголовков — с этим атрибутом картинка там просто не грузится.
+  // Пиксели мы не читаем, атрибут не нужен.
+  // Панель показывает QR сразу, а копию картинки сервер к этому моменту
+  // ещё качает. Обычно посетитель этого не замечает, но если качается
+  // долго, крутящийся кружок без объяснений выглядит поломкой.
+  const slow = setTimeout(() => {
+    frameState = 'wait'
+    renderFrame()
+  }, 6000)
+
+  const img = new Image()
+  img.alt = T.mascotAlt
+  img.onload = () => {
+    clearTimeout(slow)
+    frameState = 'img'
+    frame.replaceChildren(img)
+    save.disabled = false
+  }
+  img.onerror = () => {
+    clearTimeout(slow)
+    frameState = 'errImage'
+    renderFrame()
+  }
+  img.src = src
+
+  // Расширение берём из типа: панель отдаёт jpg, но настройкой можно вернуть png.
+  const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
+  const nameFor = (type) => 'max-mascot.' + (EXT[type] || 'jpg')
+
+  async function blob() {
+    const r = await fetch(src, { mode: 'cors' })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    return r.blob()
+  }
+
+  function setHint(key) {
+    hintKey = key
+    hint.innerHTML = T[key]
+  }
+
+  save.addEventListener('click', async () => {
+    save.disabled = true
+    busy = true
+    save.textContent = T.preparing
+    try {
+      const b = await blob()
+      const type = b.type || 'image/jpeg'
+      const file = new File([b], nameFor(type), { type })
+
+      // На айфоне это единственный надёжный способ положить картинку в «Фото».
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] })
+        setHint('hintShare')
+      } else {
+        const url = URL.createObjectURL(b)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = nameFor(b.type)
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 10_000)
+        setHint('hintSaved')
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        // пользователь закрыл меню — это не ошибка
+      } else {
+        // Сюда попадаем, когда хост картинки не отдаёт CORS и fetch запрещён.
+        // Открываем картинку отдельной вкладкой: там её сохраняют долгим нажатием.
+        window.open(src, '_blank', 'noopener')
+        setHint('hintNewTab')
+      }
+    } finally {
+      busy = false
+      save.textContent = T.save
+      save.disabled = false
+    }
+  })
+})()
+</script>
+</body>
+</html>

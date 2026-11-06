@@ -1,0 +1,13 @@
+{
+  "name": "max-mascot-web",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Страница стикера MAX: посетитель сканирует QR на панели и сохраняет своего маскота",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
