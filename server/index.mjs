@@ -25,6 +25,9 @@
  *   SHOT_TOKEN  пароль для POST /shot и POST /upload. На публичном хостинге
  *               обязателен: без него любой желающий заставит сервер качать
  *               что угодно и забьёт ему память.
+ *   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS
+ *               база MySQL для статистики генераций (server/stats.mjs).
+ *               Без DB_HOST статистика выключена, остальное работает.
  */
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
@@ -32,6 +35,7 @@ import { networkInterfaces } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { cleanRows, saveGenerations, startStats, statsEnabled, statsState } from './stats.mjs'
 
 const PORT = Number(process.env.PORT ?? 8787)
 /** Задан — значит сервер публичный и адреса строим от домена, а не от IP. */
@@ -269,6 +273,40 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // Статистика генераций с панели — в MySQL, см. server/stats.mjs.
+  // 503 — «пришли позже»: панель держит строки в очереди и повторит.
+  if (req.method === 'POST' && url.pathname === '/stats/generations') {
+    const json = { 'content-type': 'application/json' }
+    if (SHOT_TOKEN && req.headers.authorization !== `Bearer ${SHOT_TOKEN}`) {
+      return send(res, 401, JSON.stringify({ error: 'нужен токен' }), json)
+    }
+    if (!statsEnabled()) return send(res, 503, JSON.stringify({ error: 'статистика выключена: нет DB_HOST' }), json)
+
+    let body
+    try {
+      const chunks = []
+      let size = 0
+      for await (const chunk of req) {
+        size += chunk.length
+        // 200 строк — это ~50 КБ; больше присылать незачем.
+        if (size > 256 * 1024) return send(res, 413, JSON.stringify({ error: 'слишком много' }), json)
+        chunks.push(chunk)
+      }
+      body = JSON.parse(Buffer.concat(chunks).toString())
+    } catch {
+      return send(res, 400, JSON.stringify({ error: 'нужен JSON { rows: [...] }' }), json)
+    }
+
+    const rows = cleanRows(body?.rows)
+    try {
+      const saved = await saveGenerations(rows)
+      const total = Array.isArray(body?.rows) ? body.rows.length : 0
+      return send(res, 200, JSON.stringify({ saved, duplicates: rows.length - saved, rejected: total - rows.length }), json)
+    } catch {
+      return send(res, 503, JSON.stringify({ error: 'база недоступна' }), json)
+    }
+  }
+
   // Проверка живости — для Dokploy и любого монитора.
   if (req.method === 'GET' && url.pathname === '/health') {
     return send(res, 200, JSON.stringify({
@@ -276,6 +314,9 @@ const server = createServer(async (req, res) => {
       shots: shots.size,
       heldMb: Math.round(held / 1024 / 1024),
       budgetMb: Math.round(BUDGET_BYTES / 1024 / 1024),
+      // База статистики: ok, выключена или нет связи. На живость сервера не
+      // влияет — страница и QR без базы работают.
+      stats: statsState(),
       // Последние скачивания: сразу видно, кто тормозит на реальном трафике.
       timings,
     }),
@@ -480,6 +521,8 @@ const server = createServer(async (req, res) => {
 
   send(res, 404, 'не найдено')
 })
+
+startStats()
 
 server.listen(PORT, '0.0.0.0', () => {
   const origin = publicOrigin()

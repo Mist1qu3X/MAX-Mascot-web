@@ -1,0 +1,24 @@
+# Только для разработки: свой MySQL 8 на этом компьютере. Боевая база
+# доступна лишь из контейнеров на хостинге, а Dokploy собирает лендинг по
+# Dockerfile — этот файл ему не нужен.
+#
+#   docker compose up -d
+#   DB_HOST=127.0.0.1 DB_PORT=3307 DB_NAME=mascot DB_USER=mascot DB_PASS=mascot npm start
+#
+# Пароли здесь — только для локальной базы, к боевой они отношения не имеют.
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: mascot
+      MYSQL_USER: mascot
+      MYSQL_PASSWORD: mascot
+      MYSQL_ROOT_PASSWORD: mascot-root
+    # 3307, а не 3306 — чтобы не столкнуться с MySQL, если он уже стоит.
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mysql:/var/lib/mysql
+
+volumes:
+  mysql:
