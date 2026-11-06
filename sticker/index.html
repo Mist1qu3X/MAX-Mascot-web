@@ -45,10 +45,12 @@
      подложкой под паддингом, внутри круглое окно. */
   .card{position:relative;border-radius:50%;padding:8px;
     background:linear-gradient(180deg,#8f02ff 0%,#1a87ff 100%);margin-bottom:20px}
-  .inner{border-radius:50%;background:var(--void);overflow:hidden;aspect-ratio:1;
+  /* Фон круга — как на панели и в сохранённой картинке. lighten берёт
+     максимум по каждому каналу: чёрный фон маскота становится цветом круга. */
+  .inner{border-radius:50%;background:rgb(12 1 25);overflow:hidden;aspect-ratio:1;
     display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center}
   .wait{color:var(--muted);font-size:14px;line-height:1.4;text-align:center;margin:0;padding:0 22px;max-width:76%}
-  .inner img{width:100%;height:100%;object-fit:cover;display:block}
+  .inner img{width:100%;height:100%;object-fit:cover;display:block;mix-blend-mode:lighten}
   .spin{width:38px;height:38px;border:4px solid rgb(255 255 255/.18);border-top-color:#7a36ff;
     border-radius:50%;animation:r 900ms linear infinite}
   @keyframes r{to{transform:rotate(360deg)}}
@@ -253,6 +255,7 @@
     frameState = 'img'
     frame.replaceChildren(img)
     save.disabled = false
+    prepare()
   }
   img.onerror = () => {
     clearTimeout(slow)
@@ -261,7 +264,7 @@
   }
   img.src = src
 
-  // Расширение берём из типа: панель отдаёт jpg, но настройкой можно вернуть png.
+  // Расширение берём из типа: собранная картинка — png, исходная — как отдал сервер.
   const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
   const nameFor = (type) => 'max-mascot.' + (EXT[type] || 'jpg')
 
@@ -269,6 +272,87 @@
     const r = await fetch(src, { mode: 'cors' })
     if (!r.ok) throw new Error('HTTP ' + r.status)
     return r.blob()
+  }
+
+  /*
+   * Что сохраняем — не исходный квадрат, а как на странице: маскот в круге
+   * с градиентной рамкой, фон круга rgb(12, 1, 25), за кругом прозрачно (PNG).
+   */
+  const OUT = 1024 // сторона картинки, px: для аватарки и стикера с запасом
+  const BG = 'rgb(12, 1, 25)' // фон круга — как на странице и на панели
+
+  function loadImage(url) {
+    return new Promise((resolve, reject) => {
+      const im = new Image()
+      im.onload = () => resolve(im)
+      im.onerror = () => reject(new Error('не загрузилось: ' + url))
+      im.src = url
+    })
+  }
+
+  async function compose(original) {
+    // Рисуем из скачанной копии, а не из картинки на странице: та загружена
+    // без CORS, и холст с ней браузер не дал бы выгрузить.
+    const url = URL.createObjectURL(original)
+    try {
+      const pic = await loadImage(url)
+      const c = document.createElement('canvas')
+      c.width = c.height = OUT
+      const g = c.getContext('2d')
+
+      // Круг вместе с рамкой — во всю картинку. Рамка той же толщины, что на
+      // странице: 8 px при круге 350.
+      const cx = OUT / 2
+      const cy = OUT / 2
+      const R = OUT / 2
+      const ring = (2 * R * 8) / 350
+
+      // Рамка — тот же градиент, что на странице, сверху вниз.
+      const grad = g.createLinearGradient(0, cy - R, 0, cy + R)
+      grad.addColorStop(0, '#8f02ff')
+      grad.addColorStop(1, '#1a87ff')
+      g.fillStyle = grad
+      g.beginPath()
+      g.arc(cx, cy, R, 0, Math.PI * 2)
+      g.fill()
+
+      // Внутри — фон и маскот, обрезка как object-fit: cover. lighten берёт
+      // максимум по каждому каналу: чёрный фон картинки становится цветом
+      // круга, всё, что светлее, остаётся как было.
+      const r = R - ring
+      g.save()
+      g.beginPath()
+      g.arc(cx, cy, r, 0, Math.PI * 2)
+      g.clip()
+      g.fillStyle = BG
+      g.fillRect(cx - r, cy - r, 2 * r, 2 * r)
+      g.globalCompositeOperation = 'lighten'
+      const s = Math.max((2 * r) / pic.naturalWidth, (2 * r) / pic.naturalHeight)
+      const w = pic.naturalWidth * s
+      const h = pic.naturalHeight * s
+      g.drawImage(pic, cx - w / 2, cy - h / 2, w, h)
+      g.restore()
+
+      return await new Promise((resolve, reject) =>
+        c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob'))), 'image/png'))
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  /*
+   * Картинку готовим сразу, как маскот показался, а не по нажатию: на айфоне
+   * меню «Поделиться» открывается, только если вызвать его сразу после
+   * касания. Пока бы мы скачивали и собирали картинку, этот момент ушёл бы.
+   * Собрать не вышло — сохраняем исходную: лучше так, чем ничего.
+   */
+  let prepared = null
+  function prepare() {
+    prepared = blob().then((original) => compose(original).catch((e) => {
+      console.warn('[save] картинку не собрали, сохраняем исходную', e)
+      return original
+    }))
+    prepared.catch(() => {}) // ошибку разберёт нажатие на кнопку
   }
 
   function setHint(key) {
@@ -281,7 +365,7 @@
     busy = true
     save.textContent = T.preparing
     try {
-      const b = await blob()
+      const b = await (prepared || blob())
       const type = b.type || 'image/jpeg'
       const file = new File([b], nameFor(type), { type })
 
@@ -293,7 +377,7 @@
         const url = URL.createObjectURL(b)
         const a = document.createElement('a')
         a.href = url
-        a.download = nameFor(b.type)
+        a.download = nameFor(type)
         document.body.appendChild(a)
         a.click()
         a.remove()
