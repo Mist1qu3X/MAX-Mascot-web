@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS generations (
   duration_s  DECIMAL(8,1) AS (TIMESTAMPDIFF(MICROSECOND, started_at, finished_at) / 1000000) STORED
               COMMENT 'длительность, секунды',
   status      VARCHAR(32)  NOT NULL COMMENT 'success | cancelled | error:<причина>',
+  model       VARCHAR(64)  NULL     COMMENT 'модель генерации, id на kie.ai',
   received_at DATETIME(3)  NOT NULL COMMENT 'когда строка дошла до сервера, UTC',
   PRIMARY KEY (id),
   UNIQUE KEY uid (uid),
@@ -82,6 +83,7 @@ function ensureReady() {
         })
       }
       await pool.query(SCHEMA)
+      await migrate()
       state = 'ok'
     })().catch((error) => {
       ready = null
@@ -94,6 +96,30 @@ function ensureReady() {
   return ready
 }
 
+/**
+ * Модель генерации, если панель её не прислала. Не присылают только версии
+ * панели до выбора модели, а они умели одну — Nano Banana 2: модель нигде
+ * не переопределялась (ни в .env.local, ни в сборке веб-версии).
+ */
+const LEGACY_MODEL = 'nano-banana-2'
+
+/**
+ * Таблица из прошлой версии — без колонки model. CREATE TABLE IF NOT EXISTS
+ * её не добавит, а ADD COLUMN IF NOT EXISTS в MySQL 8 нет, поэтому сначала
+ * смотрим в information_schema. Заодно подписываем старые строки — все они
+ * от Nano Banana 2.
+ */
+async function migrate() {
+  const [columns] = await pool.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'generations' AND COLUMN_NAME = 'model'`)
+  if (columns.length > 0) return
+  await pool.query(
+    "ALTER TABLE generations ADD COLUMN model VARCHAR(64) NULL COMMENT 'модель генерации, id на kie.ai' AFTER status")
+  const [result] = await pool.query('UPDATE generations SET model = ? WHERE model IS NULL', [LEGACY_MODEL])
+  console.log(`[статистика] добавлена колонка model, старым строкам (${result.affectedRows}) — ${LEGACY_MODEL}`)
+}
+
 /** Подключаемся сразу при старте, не дожидаясь первой строки. */
 export function startStats() {
   if (DB_HOST) ensureReady().catch(() => {})
@@ -101,11 +127,14 @@ export function startStats() {
 
 const UID = /^[\w-]{8,64}$/
 const STATUS = /^(success|cancelled|error:[a-z]{1,20})$/
+/** id моделей kie.ai: буквы, цифры, точка, дефис, слэш — «grok-imagine/image-to-image». */
+const MODEL = /^[\w./-]{1,64}$/
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
  * Оставить только годные строки. Негодные молча отбрасываем: панель всё
  * равно не сможет их исправить, а остальные из-за них терять незачем.
+ * Модель не прислали — это старая версия панели, у неё была одна модель.
  */
 export function cleanRows(input) {
   if (!Array.isArray(input)) return []
@@ -118,7 +147,10 @@ export function cleanRows(input) {
       && Number.isInteger(row.number) && row.number > 0 && row.number < 2 ** 31
       && Number.isFinite(start) && Number.isFinite(end) && end >= start && end - start < DAY_MS
       && typeof row.status === 'string' && STATUS.test(row.status)
-  })
+  }).map((row) => ({
+    ...row,
+    model: typeof row.model === 'string' && MODEL.test(row.model) ? row.model : LEGACY_MODEL,
+  }))
 }
 
 /*
@@ -148,10 +180,14 @@ const TOTALS = `COUNT(*) AS total,
  *
  * gen_no в таблице — счётчик самой панели (он же в её generations.csv).
  */
-const NUMBERED = `SELECT ROW_NUMBER() OVER (ORDER BY id) AS n, started_at, finished_at, duration_s, status
+const NUMBERED = `SELECT ROW_NUMBER() OVER (ORDER BY id) AS n, started_at, finished_at, duration_s, status, model
   FROM generations`
 
-/** Итоги, разбивка по дням и последние генерации — панель и сайт вместе. */
+/**
+ * Итоги, разбивка по дням и по моделям, последние генерации — панель и
+ * сайт вместе. По моделям — чтобы сравнивать их на живых посетителях:
+ * сколько удачных и сколько в среднем ждали.
+ */
 export async function readStats({ limit = 200 } = {}) {
   await ensureReady()
   const [[totals]] = await pool.query(`SELECT ${TOTALS} FROM generations`)
@@ -159,8 +195,9 @@ export async function readStats({ limit = 200 } = {}) {
     "SELECT status, COUNT(*) AS n FROM generations WHERE status LIKE 'error:%' GROUP BY status ORDER BY n DESC")
   const [days] = await pool.query(
     `SELECT ${MSK_DAY} AS day, ${TOTALS} FROM generations GROUP BY day ORDER BY day DESC LIMIT 60`)
+  const [models] = await pool.query(`SELECT model, ${TOTALS} FROM generations GROUP BY model ORDER BY total DESC`)
   const [recent] = await pool.query(`SELECT * FROM (${NUMBERED}) numbered ORDER BY n DESC LIMIT ?`, [limit])
-  return { totals, errors, days, recent }
+  return { totals, errors, days, models, recent }
 }
 
 /** Все строки по номеру — для выгрузки в CSV. */
@@ -176,17 +213,17 @@ export async function saveGenerations(rows) {
   await ensureReady()
   const now = new Date()
   const values = rows.map((row) => [
-    row.uid, row.source, row.number, new Date(row.startedAt), new Date(row.finishedAt), row.status, now,
+    row.uid, row.source, row.number, new Date(row.startedAt), new Date(row.finishedAt), row.status, row.model, now,
   ])
   try {
     const [result] = await pool.query(
-      'INSERT IGNORE INTO generations (uid, source, gen_no, started_at, finished_at, status, received_at) VALUES ?',
+      'INSERT IGNORE INTO generations (uid, source, gen_no, started_at, finished_at, status, model, received_at) VALUES ?',
       [values],
     )
     state = 'ok'
     // Видно в логах Dokploy: так проверяется, что строки доходят.
     console.log(`[статистика] записано ${result.affectedRows} из ${rows.length}:`,
-      rows.map((row) => `№${row.number} ${row.source} ${row.status}`).join(', '))
+      rows.map((row) => `№${row.number} ${row.source} ${row.status} ${row.model}`).join(', '))
     return result.affectedRows
   } catch (error) {
     state = error?.sqlMessage ? 'ошибка базы' : 'нет связи с базой'

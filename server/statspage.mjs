@@ -70,6 +70,16 @@ const STATUS = {
   'error:api': 'ошибка: сбой сервиса',
 }
 
+/** Имена моделей — те же, что на экране настройки панели (MODELS в kie.ts). */
+const MODEL = {
+  'nano-banana-2': 'Nano Banana 2',
+  'nano-banana-2-1': 'Nano Banana 2.1',
+  'nano-banana-pro': 'Nano Banana Pro',
+  'gpt-image-2-image-to-image': 'GPT Image 2',
+  'grok-imagine/image-to-image': 'Grok Imagine',
+}
+const modelName = (id) => (id ? MODEL[id] ?? id : '—')
+
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 const num = (value) => (value === null || value === undefined ? null : Number(value))
 const seconds = (value) => (num(value) === null ? '—' : num(value).toFixed(1).replace('.', ','))
@@ -142,7 +152,7 @@ export function renderUnavailable(state) {
 <p class="muted">База статистики недоступна: ${esc(state)}. Строки с панели не теряются — она пришлёт их, когда база ответит.</p>`)
 }
 
-export function renderStats({ totals, errors, days, recent }) {
+export function renderStats({ totals, errors, days, models = [], recent }) {
   const total = num(totals.total) ?? 0
   const now = msk(new Date())
 
@@ -163,11 +173,17 @@ export function renderStats({ totals, errors, days, recent }) {
 <td class="r">${num(d.success)}</td><td class="r">${num(d.errors)}</td><td class="r">${num(d.cancelled)}</td>
 <td class="r">${seconds(d.avg_s)}</td></tr>`).join('')
 
+  // Для сравнения моделей: доля удачных и время успешных — среднее и разброс.
+  const modelRows = models.map((m) => `<tr><td>${esc(modelName(m.model))}</td><td class="r">${num(m.total)}</td>
+<td class="r">${num(m.success)}${percent(num(m.success), num(m.total))}</td><td class="r">${num(m.errors)}</td>
+<td class="r">${num(m.cancelled)}</td><td class="r">${seconds(m.avg_s)}</td>
+<td class="r">${seconds(m.min_s)}–${seconds(m.max_s)}</td></tr>`).join('')
+
   const recentRows = recent.map((r) => {
     const start = msk(r.started_at)
     const end = msk(r.finished_at)
     return `<tr><td class="r">${num(r.n)}</td><td>${start.day}</td><td>${start.time}</td>
-<td>${end.time}</td><td class="r">${seconds(r.duration_s)}</td>${statusCell(r.status)}</tr>`
+<td>${end.time}</td><td class="r">${seconds(r.duration_s)}</td>${statusCell(r.status)}<td>${esc(modelName(r.model))}</td></tr>`
   }).join('')
 
   return page('Статистика генераций', `<div class="top"><h1>Статистика генераций</h1><a href="/stats/logout">выйти</a></div>
@@ -177,9 +193,12 @@ export function renderStats({ totals, errors, days, recent }) {
 <h2>По дням</h2>
 ${days.length ? `<div class="scroll"><table><tr><th>день</th><th class="r">всего</th><th class="r">успех</th>
 <th class="r">ошибки</th><th class="r">прервано</th><th class="r">среднее, с</th></tr>${dayRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}
+<h2>По моделям</h2>
+${models.length ? `<div class="scroll"><table><tr><th>модель</th><th class="r">всего</th><th class="r">успех</th>
+<th class="r">ошибки</th><th class="r">прервано</th><th class="r">среднее, с</th><th class="r">быстрее–дольше, с</th></tr>${modelRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}
 <h2>Последние генерации</h2>
 ${recent.length ? `<div class="scroll"><table><tr><th class="r">№</th><th>дата</th><th>начало</th><th>конец</th>
-<th class="r">длит., с</th><th>статус</th></tr>${recentRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}`)
+<th class="r">длит., с</th><th>статус</th><th>модель</th></tr>${recentRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}`)
 }
 
 /** CSV под Excel с русскими настройками — как generations.csv на панели. */
@@ -187,7 +206,8 @@ export function renderCsv(rows) {
   const lines = rows.map((r) => {
     const start = msk(r.started_at)
     const end = msk(r.finished_at)
-    return [num(r.n), start.day, start.time, end.time, seconds(r.duration_s), STATUS[r.status] ?? r.status].join(';')
+    return [num(r.n), start.day, start.time, end.time, seconds(r.duration_s), STATUS[r.status] ?? r.status,
+      modelName(r.model)].join(';')
   })
-  return '﻿' + ['номер;дата;начало;конец;длительность, с;статус', ...lines].join('\r\n') + '\r\n'
+  return '﻿' + ['номер;дата;начало;конец;длительность, с;статус;модель', ...lines].join('\r\n') + '\r\n'
 }
