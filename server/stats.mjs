@@ -135,6 +135,22 @@ const TOTALS = `COUNT(*) AS total,
   MIN(CASE WHEN status = 'success' THEN duration_s END) AS min_s,
   MAX(CASE WHEN status = 'success' THEN duration_s END) AS max_s`
 
+/*
+ * Номер генерации на странице — сквозной за всё время, по всем панелям и
+ * сайту: 1, 2, 3… — по порядку, в каком строки пришли в базу. По нему видно,
+ * какой это по счёту человек.
+ *
+ * Считается запросом (ROW_NUMBER по id), а не берётся из самого id: в id
+ * бывают дыры — повторная отправка той же строки отбрасывается INSERT
+ * IGNORE, но значение счётчика при этом всё равно тратится. А номер должен
+ * идти подряд. Новые строки всегда получают id больше прежних, так что
+ * номера уже записанных генераций не меняются.
+ *
+ * gen_no в таблице — счётчик самой панели (он же в её generations.csv).
+ */
+const NUMBERED = `SELECT ROW_NUMBER() OVER (ORDER BY id) AS n, started_at, finished_at, duration_s, status
+  FROM generations`
+
 /** Итоги, разбивка по дням и последние генерации — панель и сайт вместе. */
 export async function readStats({ limit = 200 } = {}) {
   await ensureReady()
@@ -143,17 +159,14 @@ export async function readStats({ limit = 200 } = {}) {
     "SELECT status, COUNT(*) AS n FROM generations WHERE status LIKE 'error:%' GROUP BY status ORDER BY n DESC")
   const [days] = await pool.query(
     `SELECT ${MSK_DAY} AS day, ${TOTALS} FROM generations GROUP BY day ORDER BY day DESC LIMIT 60`)
-  const [recent] = await pool.query(
-    `SELECT gen_no, started_at, finished_at, duration_s, status FROM generations
-     ORDER BY started_at DESC, id DESC LIMIT ?`, [limit])
+  const [recent] = await pool.query(`SELECT * FROM (${NUMBERED}) numbered ORDER BY n DESC LIMIT ?`, [limit])
   return { totals, errors, days, recent }
 }
 
-/** Все строки по порядку — для выгрузки в CSV. */
+/** Все строки по номеру — для выгрузки в CSV. */
 export async function allGenerations() {
   await ensureReady()
-  const [rows] = await pool.query(
-    'SELECT gen_no, started_at, finished_at, duration_s, status FROM generations ORDER BY started_at, id')
+  const [rows] = await pool.query(`${NUMBERED} ORDER BY id`)
   return rows
 }
 

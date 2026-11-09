@@ -166,7 +166,7 @@ export function renderStats({ totals, errors, days, recent }) {
   const recentRows = recent.map((r) => {
     const start = msk(r.started_at)
     const end = msk(r.finished_at)
-    return `<tr><td class="r">${num(r.gen_no)}</td><td>${start.day}</td><td>${start.time}</td>
+    return `<tr><td class="r">${num(r.n)}</td><td>${start.day}</td><td>${start.time}</td>
 <td>${end.time}</td><td class="r">${seconds(r.duration_s)}</td>${statusCell(r.status)}</tr>`
   }).join('')
 
@@ -187,7 +187,7 @@ export function renderCsv(rows) {
   const lines = rows.map((r) => {
     const start = msk(r.started_at)
     const end = msk(r.finished_at)
-    return [num(r.gen_no), start.day, start.time, end.time, seconds(r.duration_s), STATUS[r.status] ?? r.status].join(';')
+    return [num(r.n), start.day, start.time, end.time, seconds(r.duration_s), STATUS[r.status] ?? r.status].join(';')
   })
   return '﻿' + ['номер;дата;начало;конец;длительность, с;статус', ...lines].join('\r\n') + '\r\n'
 }
