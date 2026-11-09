@@ -77,6 +77,7 @@ const MODEL = {
   'nano-banana-pro': 'Nano Banana Pro',
   'gpt-image-2-image-to-image': 'GPT Image 2',
   'grok-imagine/image-to-image': 'Grok Imagine',
+  'seedream/4.5-edit': 'Seedream 4.5',
 }
 const modelName = (id) => (id ? MODEL[id] ?? id : '—')
 
