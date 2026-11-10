@@ -35,7 +35,9 @@ import { networkInterfaces } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { allGenerations, cleanRows, readStats, saveGenerations, startStats, statsEnabled, statsState } from './stats.mjs'
+import {
+  allGenerations, cleanRows, readStats, recordClick, saveGenerations, startStats, statsEnabled, statsState,
+} from './stats.mjs'
 import {
   SIGN_OUT_COOKIE, passwordOk, renderCsv, renderSignIn, renderStats, renderUnavailable, signInCookie, signedIn,
   statsPageEnabled,
@@ -103,6 +105,17 @@ function note(record) {
  * В памяти: панель перезапускается, чистить нечего.
  */
 const shots = new Map()
+
+/**
+ * Страницы, на которых считаем нажатия кнопок: id картинки -> сколько раз
+ * нажали каждую. Отдельно от shots: картинки вытесняются по памяти, а до
+ * кнопки «Создать стикер» посетитель может дойти и через час. Запись весит
+ * байты, так что держим много.
+ */
+const clickable = new Map()
+const CLICKABLE_KEEP = 10_000
+/** Больше этого на одну картинку не засчитываем: столько руками не нажимают. */
+const CLICKS_PER_SHOT = 20
 
 /** Домашние сети: 10/8, 172.16/12, 192.168/16. Только сюда попадёт телефон. */
 function isLan(ip) {
@@ -262,6 +275,8 @@ const server = createServer(async (req, res) => {
       // Расширения в адресе нет намеренно: тип узнаётся только после
       // скачивания, а ответ нужен раньше. Тип отдаём заголовком.
       const id = keep(source)
+      clickable.set(id, { save: 0, bot: 0 })
+      if (clickable.size > CLICKABLE_KEEP) clickable.delete(clickable.keys().next().value)
       const file = `/i/${id}`
       const origin = publicOrigin()
       send(res, 200, JSON.stringify({
@@ -309,6 +324,39 @@ const server = createServer(async (req, res) => {
     } catch {
       return send(res, 503, JSON.stringify({ error: 'база недоступна' }), json)
     }
+  }
+
+  /*
+   * Нажатия на странице стикера: «Сохранить картинку» (save) и «Создать
+   * стикер» — переход в бота (bot). Страница шлёт их через sendBeacon и
+   * ответа не ждёт, поэтому отвечаем сразу, а в базу пишем фоном.
+   *
+   * Адрес открыт всем — нажимают посетители со своих телефонов. Чтобы
+   * счётчик не накрутили, засчитываем только картинки, которые сервер сам
+   * выдал панели, и не больше CLICKS_PER_SHOT нажатий кнопки на картинку.
+   * Остальное молча пропускаем: ответ одинаковый, подбирать нечего.
+   */
+  if (req.method === 'POST' && url.pathname === '/stats/click') {
+    const chunks = []
+    let size = 0
+    for await (const chunk of req) {
+      size += chunk.length
+      if (size > 512) return send(res, 413, '')
+      chunks.push(chunk)
+    }
+    let click = null
+    try {
+      click = JSON.parse(Buffer.concat(chunks).toString())
+    } catch {
+      // не JSON — не засчитываем
+    }
+    const button = click?.button
+    const counts = typeof click?.shot === 'string' ? clickable.get(click.shot) : undefined
+    if (counts && (button === 'save' || button === 'bot') && counts[button] < CLICKS_PER_SHOT) {
+      counts[button] += 1
+      recordClick(button, click.shot)
+    }
+    return send(res, 204, '')
   }
 
   // Страница статистики и выгрузка CSV — под паролем STATS_PASSWORD,

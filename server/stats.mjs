@@ -15,6 +15,9 @@
  *
  * Драйвер mysql2 подгружается, только когда база задана: локальному серверу
  * панели (`npm run sticker` в MAX_PO) база не нужна, и драйвера у него нет.
+ *
+ * Здесь же — нажатия кнопок на странице стикера (таблица sticker_clicks):
+ * «Сохранить картинку» и «Создать стикер» — переход в бота.
  */
 
 const DB_HOST = process.env.DB_HOST ?? ''
@@ -46,6 +49,22 @@ CREATE TABLE IF NOT EXISTS generations (
   KEY started_at (started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='Генерации маскотов: одна строка — одна генерация'`
+
+/*
+ * Нажатия на странице стикера — той, куда ведёт QR с панели. shot — id
+ * картинки (/i/<id>): одна картинка — один посетитель, так что по нему
+ * видно, сколько разных людей нажали, — один и тот же мог нажать не раз.
+ */
+const CLICKS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS sticker_clicks (
+  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  button     VARCHAR(16) NOT NULL COMMENT 'save — «Сохранить картинку», bot — «Создать стикер» (переход в бота)',
+  shot       VARCHAR(32) NOT NULL COMMENT 'id картинки на странице (/i/<id>)',
+  clicked_at DATETIME(3) NOT NULL COMMENT 'когда нажали, UTC',
+  PRIMARY KEY (id),
+  KEY clicked_at (clicked_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  COMMENT='Нажатия кнопок на странице стикера: одна строка — одно нажатие'`
 
 let pool = null
 let ready = null
@@ -120,9 +139,72 @@ async function migrate() {
   console.log(`[статистика] добавлена колонка model, старым строкам (${result.affectedRows}) — ${LEGACY_MODEL}`)
 }
 
+/*
+ * Таблица нажатий заводится отдельно от основной: если с ней что-то не так,
+ * статистика генераций от этого не ломается.
+ */
+let clicksReady = null
+
+function ensureClicksTable() {
+  if (!clicksReady) {
+    clicksReady = ensureReady()
+      .then(() => pool.query(CLICKS_SCHEMA))
+      .catch((error) => {
+        clicksReady = null
+        throw error
+      })
+  }
+  return clicksReady
+}
+
+/**
+ * Нажатия, которые ещё не легли в базу. Телефон шлёт нажатие один раз и
+ * не повторяет, так что, если база моргнула, повторяет сервер: держим
+ * строки здесь и пробуем снова по таймеру. Время нажатия запомнено сразу —
+ * поздняя запись его не сдвинет.
+ */
+const clickQueue = []
+const CLICK_QUEUE_MAX = 5000
+const CLICK_RETRY_MS = 30_000
+let flushing = false
+
+/** Записать нажатие. Ничего не ждёт: ответ телефону от базы не зависит. */
+export function recordClick(button, shot) {
+  if (!DB_HOST) return
+  clickQueue.push([button, shot, new Date()])
+  // База лежит долго — выбрасываем самые старые, чтобы не съесть память.
+  if (clickQueue.length > CLICK_QUEUE_MAX) clickQueue.splice(0, clickQueue.length - CLICK_QUEUE_MAX)
+  void flushClicks()
+}
+
+async function flushClicks() {
+  if (flushing) return
+  flushing = true
+  try {
+    while (clickQueue.length > 0) {
+      const batch = clickQueue.splice(0, MAX_ROWS)
+      try {
+        await ensureClicksTable()
+        await pool.query('INSERT INTO sticker_clicks (button, shot, clicked_at) VALUES ?', [batch])
+        console.log('[статистика] нажатия:', batch.map(([button, shot]) => `${button} ${shot}`).join(', '))
+      } catch (error) {
+        clickQueue.unshift(...batch)
+        console.error(`[статистика] нажатия не записаны (${clickQueue.length} в очереди), повторим:`,
+          error?.message ?? error)
+        return
+      }
+    }
+  } finally {
+    flushing = false
+  }
+}
+
 /** Подключаемся сразу при старте, не дожидаясь первой строки. */
 export function startStats() {
-  if (DB_HOST) ensureReady().catch(() => {})
+  if (!DB_HOST) return
+  ensureReady().catch(() => {})
+  // unref — таймер не держит процесс, если сервер решат остановить.
+  setInterval(() => void flushClicks(), CLICK_RETRY_MS).unref()
 }
 
 const UID = /^[\w-]{8,64}$/
@@ -158,7 +240,7 @@ export function cleanRows(input) {
  * Москве: CONVERT_TZ с числовым смещением работает и без таблиц часовых
  * поясов в MySQL, а летнего времени в Москве нет.
  */
-const MSK_DAY = "DATE_FORMAT(CONVERT_TZ(started_at, '+00:00', '+03:00'), '%Y-%m-%d')"
+const mskDay = (column) => `DATE_FORMAT(CONVERT_TZ(${column}, '+00:00', '+03:00'), '%Y-%m-%d')`
 const TOTALS = `COUNT(*) AS total,
   SUM(status = 'success') AS success,
   SUM(status LIKE 'error:%') AS errors,
@@ -194,10 +276,30 @@ export async function readStats({ limit = 200 } = {}) {
   const [errors] = await pool.query(
     "SELECT status, COUNT(*) AS n FROM generations WHERE status LIKE 'error:%' GROUP BY status ORDER BY n DESC")
   const [days] = await pool.query(
-    `SELECT ${MSK_DAY} AS day, ${TOTALS} FROM generations GROUP BY day ORDER BY day DESC LIMIT 60`)
+    `SELECT ${mskDay('started_at')} AS day, ${TOTALS} FROM generations GROUP BY day ORDER BY day DESC LIMIT 60`)
   const [models] = await pool.query(`SELECT model, ${TOTALS} FROM generations GROUP BY model ORDER BY total DESC`)
   const [recent] = await pool.query(`SELECT * FROM (${NUMBERED}) numbered ORDER BY n DESC LIMIT ?`, [limit])
-  return { totals, errors, days, models, recent }
+  // Нажатия не прочитались — страница всё равно покажет генерации.
+  const clicks = await readClicks().catch((error) => {
+    console.error('[статистика] нажатия не прочитались:', error?.message ?? error)
+    return null
+  })
+  return { totals, errors, days, models, recent, clicks }
+}
+
+/**
+ * Нажатия по кнопкам: сколько всего и у скольких разных картинок, с какого
+ * момента считаем, и по дням (по Москве, как генерации).
+ */
+async function readClicks() {
+  await ensureClicksTable()
+  const [totals] = await pool.query(
+    `SELECT button, COUNT(*) AS clicks, COUNT(DISTINCT shot) AS shots, MIN(clicked_at) AS since
+     FROM sticker_clicks GROUP BY button`)
+  const [days] = await pool.query(
+    `SELECT ${mskDay('clicked_at')} AS day, SUM(button = 'save') AS save_clicks, SUM(button = 'bot') AS bot_clicks
+     FROM sticker_clicks GROUP BY day ORDER BY day DESC LIMIT 60`)
+  return { totals, days }
 }
 
 /** Все строки по номеру — для выгрузки в CSV. */

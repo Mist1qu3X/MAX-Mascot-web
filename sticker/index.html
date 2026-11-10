@@ -194,6 +194,26 @@
   const bot = document.getElementById('bot')
   if (q.get('bot')) bot.href = q.get('bot')
 
+  /*
+   * Статистика: сколько раз нажали «Сохранить картинку» и «Создать стикер»
+   * (переход в бота). Считаем само нажатие, а не то, чем оно кончилось.
+   * sendBeacon доходит, даже если страница тут же уходит в бота, и ничего
+   * не ждёт. Не дошло — не страшно: кнопки от этого не зависят.
+   */
+  const shotId = (/^\/i\/([\w-]+)/.exec(q.get('i') || '') || [])[1]
+  function count(button) {
+    if (!shotId) return
+    try {
+      const body = JSON.stringify({ button: button, shot: shotId })
+      if (!(navigator.sendBeacon && navigator.sendBeacon('/stats/click', body))) {
+        fetch('/stats/click', { method: 'POST', body: body, keepalive: true }).catch(() => {})
+      }
+    } catch (e) {
+      // статистика не должна мешать кнопкам
+    }
+  }
+  bot.addEventListener('click', () => count('bot'))
+
   /**
    * Что сейчас в рамке и в подсказке — чтобы при смене языка перерисовать их
    * на актуальном тексте, а не откатить к исходному.
@@ -380,6 +400,7 @@
   }
 
   save.addEventListener('click', async () => {
+    count('save')
     save.disabled = true
     busy = true
     save.textContent = T.preparing

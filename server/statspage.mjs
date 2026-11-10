@@ -98,6 +98,30 @@ function statusCell(status) {
 
 const percent = (part, total) => (total ? ` (${Math.round((100 * part) / total)}%)` : '')
 
+/** Кнопки страницы стикера: как их называют люди и что написано на самой кнопке. */
+const BUTTONS = [
+  ['save', 'Скачать — «Сохранить картинку»'],
+  ['bot', 'Перейти в бота — «Создать стикер»'],
+]
+
+/** Самое первое нажатие — с него идёт подсчёт: раньше нажатия не записывались. */
+const firstClick = (clicks) => new Date(Math.min(...clicks.totals.map((row) => new Date(row.since).getTime())))
+
+function renderClicks(clicks) {
+  if (!clicks) return '<p class="muted">Нажатия сейчас не прочитались — подробности в логе сервера.</p>'
+  if (clicks.totals.length === 0) return '<p class="muted">Нажатий пока не было.</p>'
+  const byButton = new Map(clicks.totals.map((row) => [row.button, row]))
+  const rows = BUTTONS.map(([button, label]) => {
+    const row = byButton.get(button)
+    // Название кнопки переносится: иначе на телефоне числа уезжают за край.
+    return `<tr><td class="wrap">${esc(label)}</td><td class="r">${num(row?.clicks) ?? 0}</td><td class="r">${num(row?.shots) ?? 0}</td></tr>`
+  }).join('')
+  const since = msk(firstClick(clicks))
+  return `<div class="scroll"><table><tr><th>кнопка</th><th class="r">нажатий</th><th class="r">маскотов</th></tr>${rows}</table></div>
+<p class="muted" style="margin-top:8px">Маскотов — у скольких разных картинок нажали хотя бы раз: один человек
+мог нажать несколько раз. Считаем с ${since.day} в ${since.time.slice(0, 5)}.</p>`
+}
+
 const STYLE = `
 @font-face{font-family:'VK Sans Display';font-weight:400;src:url('/fonts/VKSansDisplay-regular.woff2') format('woff2')}
 @font-face{font-family:'VK Sans Display';font-weight:600;src:url('/fonts/VKSansDisplay-demibold.woff2') format('woff2')}
@@ -122,6 +146,7 @@ th,td{padding:8px 12px;text-align:left;white-space:nowrap;border-bottom:1px soli
 th{color:var(--muted);font-weight:400;font-size:13px}
 tr:last-child td{border-bottom:0}
 td.ok{color:var(--ok)} td.bad{color:var(--bad)} td.off{color:var(--off)} p.bad{color:var(--bad)}
+td.wrap{white-space:normal}
 .signin{max-width:420px;margin:22vh auto 0;text-align:center}
 .login{display:flex;gap:8px;margin-top:20px}
 .login input{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--ink);background:transparent;
@@ -153,7 +178,7 @@ export function renderUnavailable(state) {
 <p class="muted">База статистики недоступна: ${esc(state)}. Строки с панели не теряются — она пришлёт их, когда база ответит.</p>`)
 }
 
-export function renderStats({ totals, errors, days, models = [], recent }) {
+export function renderStats({ totals, errors, days, models = [], recent, clicks = null }) {
   const total = num(totals.total) ?? 0
   const now = msk(new Date())
 
@@ -170,9 +195,20 @@ export function renderStats({ totals, errors, days, models = [], recent }) {
       .map((e) => `${esc((STATUS[e.status] ?? e.status).replace('ошибка: ', ''))} — ${num(e.n)}`).join(' · ')}</p>`
     : ''
 
-  const dayRows = days.map((d) => `<tr><td>${esc(d.day)}</td><td class="r">${num(d.total)}</td>
-<td class="r">${num(d.success)}</td><td class="r">${num(d.errors)}</td><td class="r">${num(d.cancelled)}</td>
-<td class="r">${seconds(d.avg_s)}</td></tr>`).join('')
+  // Генерации и нажатия — по одним и тем же дням. День мог быть только с
+  // нажатиями: картинку сохранили назавтра. До начала подсчёта — прочерк, не ноль.
+  const generationDays = new Map(days.map((d) => [d.day, d]))
+  const clickDays = new Map((clicks?.days ?? []).map((d) => [d.day, d]))
+  const clicksFrom = clicks?.totals.length ? msk(firstClick(clicks)).day : null
+  const clickCell = (day, value) => `<td class="r">${clicksFrom && day >= clicksFrom ? num(value) ?? 0 : '—'}</td>`
+  const dayKeys = [...new Set([...generationDays.keys(), ...clickDays.keys()])].sort().reverse().slice(0, 60)
+  const dayRows = dayKeys.map((day) => {
+    const d = generationDays.get(day) ?? {}
+    const c = clickDays.get(day) ?? {}
+    return `<tr><td>${esc(day)}</td><td class="r">${num(d.total) ?? 0}</td>
+<td class="r">${num(d.success) ?? 0}</td><td class="r">${num(d.errors) ?? 0}</td><td class="r">${num(d.cancelled) ?? 0}</td>
+<td class="r">${seconds(d.avg_s)}</td>${clickCell(day, c.save_clicks)}${clickCell(day, c.bot_clicks)}</tr>`
+  }).join('')
 
   // Для сравнения моделей: доля удачных и время успешных — среднее и разброс.
   const modelRows = models.map((m) => `<tr><td>${esc(modelName(m.model))}</td><td class="r">${num(m.total)}</td>
@@ -191,9 +227,12 @@ export function renderStats({ totals, errors, days, models = [], recent }) {
 <p class="muted">Время московское. Обновлено ${now.day} в ${now.time} — обновите страницу, чтобы увидеть новые.</p>
 <nav><a href="/stats.csv">Скачать CSV</a></nav>
 <div class="cards">${cards}</div>${errorLine}
+<h2>Кнопки на странице стикера</h2>
+${renderClicks(clicks)}
 <h2>По дням</h2>
-${days.length ? `<div class="scroll"><table><tr><th>день</th><th class="r">всего</th><th class="r">успех</th>
-<th class="r">ошибки</th><th class="r">прервано</th><th class="r">среднее, с</th></tr>${dayRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}
+${dayKeys.length ? `<div class="scroll"><table><tr><th>день</th><th class="r">всего</th><th class="r">успех</th>
+<th class="r">ошибки</th><th class="r">прервано</th><th class="r">среднее, с</th>
+<th class="r">скачать</th><th class="r">в бота</th></tr>${dayRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}
 <h2>По моделям</h2>
 ${models.length ? `<div class="scroll"><table><tr><th>модель</th><th class="r">всего</th><th class="r">успех</th>
 <th class="r">ошибки</th><th class="r">прервано</th><th class="r">среднее, с</th><th class="r">быстрее–дольше, с</th></tr>${modelRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}
