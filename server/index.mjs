@@ -150,8 +150,15 @@ function publicOrigin() {
   return host ? `http://${host}:${PORT}` : null
 }
 
+/*
+ * x-robots-tag — на каждом ответе: сайт не для поисковиков. Страницы
+ * стикера — фотографии живых людей, и в выдаче им делать нечего; заголовок,
+ * в отличие от meta в HTML, закрывает и сами картинки (/i/…).
+ * robots.txt здесь нарочно нет: запрет обхода спрятал бы от Google этот
+ * заголовок, и уже найденная ссылка могла бы остаться в выдаче.
+ */
 function send(res, status, body, headers = {}) {
-  res.writeHead(status, { 'access-control-allow-origin': '*', ...headers })
+  res.writeHead(status, { 'access-control-allow-origin': '*', 'x-robots-tag': 'noindex, nofollow', ...headers })
   res.end(body)
 }
 
