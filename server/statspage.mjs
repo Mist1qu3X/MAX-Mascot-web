@@ -153,12 +153,11 @@ function renderClicks(clicks) {
   const rows = BUTTONS.map(([button, label]) => {
     const row = byButton.get(button)
     // Название кнопки переносится: иначе на телефоне числа уезжают за край.
-    return `<tr><td class="wrap">${esc(label)}</td><td class="r">${num(row?.clicks) ?? 0}</td><td class="r">${num(row?.shots) ?? 0}</td></tr>`
+    return `<tr><td class="wrap">${esc(label)}</td><td class="r">${num(row?.clicks) ?? 0}</td></tr>`
   }).join('')
   const since = msk(firstClick(clicks))
-  return `<div class="scroll"><table><tr><th>кнопка</th><th class="r">нажатий</th><th class="r">маскотов</th></tr>${rows}</table></div>
-<p class="muted" style="margin-top:8px">Маскотов — у скольких разных картинок нажали хотя бы раз: один человек
-мог нажать несколько раз. Считаем с ${since.day} в ${since.time.slice(0, 5)}.</p>`
+  return `<div class="scroll"><table><tr><th>кнопка</th><th class="r">нажатий</th></tr>${rows}</table></div>
+<p class="muted" style="margin-top:8px">Считаем с ${since.day} в ${since.time.slice(0, 5)}.</p>`
 }
 
 const STYLE = `

@@ -53,8 +53,7 @@ CREATE TABLE IF NOT EXISTS generations (
 
 /*
  * Нажатия на странице стикера — той, куда ведёт QR с панели. shot — id
- * картинки (/i/<id>): одна картинка — один посетитель, так что по нему
- * видно, сколько разных людей нажали, — один и тот же мог нажать не раз.
+ * картинки (/i/<id>): по нему нажатия видны у каждого QR-кода.
  */
 const CLICKS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS sticker_clicks (
@@ -416,13 +415,13 @@ export async function readQrCode(id) {
 }
 
 /**
- * Нажатия по кнопкам: сколько всего и у скольких разных картинок, с какого
- * момента считаем, и по дням (по Москве, как генерации).
+ * Нажатия по кнопкам: сколько всего, с какого момента считаем, и по дням
+ * (по Москве, как генерации).
  */
 async function readClicks() {
   await ensureClicksTable()
   const [totals] = await pool.query(
-    `SELECT button, COUNT(*) AS clicks, COUNT(DISTINCT shot) AS shots, MIN(clicked_at) AS since
+    `SELECT button, COUNT(*) AS clicks, MIN(clicked_at) AS since
      FROM sticker_clicks GROUP BY button`)
   const [days] = await pool.query(
     `SELECT ${mskDay('clicked_at')} AS day, SUM(button = 'save') AS save_clicks, SUM(button = 'bot') AS bot_clicks
