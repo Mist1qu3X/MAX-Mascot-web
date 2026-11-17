@@ -104,6 +104,45 @@ const BUTTONS = [
   ['bot', 'Перейти в бота — «Создать стикер»'],
 ]
 
+/** Список QR-кодов: номер, когда создан, нажатия и ссылка на его страницу. */
+function renderQrList(qr) {
+  if (!qr) return '<p class="muted">QR-коды сейчас не прочитались — подробности в логе сервера.</p>'
+  const total = num(qr.summary.n) ?? 0
+  if (total === 0) return '<p class="muted">Сохранённых QR-кодов пока нет — они появятся с новыми генерациями.</p>'
+  const mb = ((num(qr.summary.bytes) ?? 0) / 1024 / 1024).toFixed(1).replace('.', ',')
+  const rows = qr.rows.map((r) => {
+    const at = msk(r.created_at)
+    return `<tr><td class="r">${num(r.n)}</td><td>${at.day}</td><td>${at.time}</td>
+<td class="r">${num(r.save_clicks) ?? 0}</td><td class="r">${num(r.bot_clicks) ?? 0}</td>
+<td><a href="/stats/qr/${esc(r.id)}">QR и картинка</a></td></tr>`
+  }).join('')
+  return `<p class="muted">Сохранено: ${total}, картинки занимают ${mb} МБ в базе. Ссылки из QR работают и после
+перезапуска сервера.</p>
+<div class="scroll"><table><tr><th class="r">№</th><th>дата</th><th>время</th><th class="r">скачать</th>
+<th class="r">в бота</th><th></th></tr>${rows}</table></div>`
+}
+
+/** Страница одного QR-кода: сам QR, картинка маскота и ссылка — та же, что была на панели. */
+export function renderQrPage(qr, link, svg) {
+  const at = msk(qr.created_at)
+  const title = `QR-код №${num(qr.n)}`
+  return page(title, `<div class="top"><h1>${title}</h1><a href="/stats#qr">к статистике</a></div>
+<p class="muted">${at.day} в ${at.time.slice(0, 5)} по Москве · скачать: ${num(qr.save_clicks) ?? 0} · в бота:
+${num(qr.bot_clicks) ?? 0}</p>
+<div class="qrview">
+<figure><div class="qrcode">${svg ?? '<p class="bad">QR не нарисовался — подробности в логе сервера.</p>'}</div>
+<figcaption>Отсканируйте — откроется страница маскота, как с QR на панели</figcaption></figure>
+<figure><img class="mascot" src="/i/${esc(qr.id)}" alt="Маскот">
+<figcaption>Картинка маскота, ${Math.round((num(qr.size) ?? 0) / 1024)} КБ</figcaption></figure>
+</div>
+<p class="link"><a href="${esc(link)}">${esc(link)}</a></p>`)
+}
+
+export function renderQrMissing() {
+  return page('QR-код не найден', `<div class="top"><h1>QR-код не найден</h1><a href="/stats#qr">к статистике</a></div>
+<p class="muted">Такого QR-кода в базе нет: его картинка не сохранилась или в ссылке ошибка.</p>`)
+}
+
 /** Самое первое нажатие — с него идёт подсчёт: раньше нажатия не записывались. */
 const firstClick = (clicks) => new Date(Math.min(...clicks.totals.map((row) => new Date(row.since).getTime())))
 
@@ -147,6 +186,14 @@ th{color:var(--muted);font-weight:400;font-size:13px}
 tr:last-child td{border-bottom:0}
 td.ok{color:var(--ok)} td.bad{color:var(--bad)} td.off{color:var(--off)} p.bad{color:var(--bad)}
 td.wrap{white-space:normal}
+a{color:#c3a6ff}
+.qrview{display:flex;flex-wrap:wrap;gap:16px;margin-top:16px}
+.qrview figure{margin:0;flex:1 1 260px;max-width:380px}
+.qrcode{background:#fff;border-radius:14px;padding:8px}
+.qrcode svg{display:block;width:100%;height:auto}
+.mascot{display:block;width:100%;aspect-ratio:1;object-fit:cover;border-radius:14px;background:#000}
+figcaption{color:var(--muted);font-size:13px;margin-top:6px}
+.link{margin-top:16px;overflow-wrap:anywhere}
 .signin{max-width:420px;margin:22vh auto 0;text-align:center}
 .login{display:flex;gap:8px;margin-top:20px}
 .login input{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--ink);background:transparent;
@@ -178,7 +225,7 @@ export function renderUnavailable(state) {
 <p class="muted">База статистики недоступна: ${esc(state)}. Строки с панели не теряются — она пришлёт их, когда база ответит.</p>`)
 }
 
-export function renderStats({ totals, errors, days, models = [], recent, clicks = null }) {
+export function renderStats({ totals, errors, days, models = [], recent, clicks = null, qr = null }) {
   const total = num(totals.total) ?? 0
   const now = msk(new Date())
 
@@ -225,7 +272,7 @@ export function renderStats({ totals, errors, days, models = [], recent, clicks 
 
   return page('Статистика генераций', `<div class="top"><h1>Статистика генераций</h1><a href="/stats/logout">выйти</a></div>
 <p class="muted">Время московское. Обновлено ${now.day} в ${now.time} — обновите страницу, чтобы увидеть новые.</p>
-<nav><a href="/stats.csv">Скачать CSV</a></nav>
+<nav><a href="/stats.csv">Скачать CSV</a><a href="#qr">QR-коды</a></nav>
 <div class="cards">${cards}</div>${errorLine}
 <h2>Кнопки на странице стикера</h2>
 ${renderClicks(clicks)}
@@ -238,7 +285,9 @@ ${models.length ? `<div class="scroll"><table><tr><th>модель</th><th class
 <th class="r">ошибки</th><th class="r">прервано</th><th class="r">среднее, с</th><th class="r">быстрее–дольше, с</th></tr>${modelRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}
 <h2>Последние генерации</h2>
 ${recent.length ? `<div class="scroll"><table><tr><th class="r">№</th><th>дата</th><th>начало</th><th>конец</th>
-<th class="r">длит., с</th><th>статус</th><th>модель</th></tr>${recentRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}`)
+<th class="r">длит., с</th><th>статус</th><th>модель</th></tr>${recentRows}</table></div>` : '<p class="muted">Пока пусто.</p>'}
+<h2 id="qr">QR-коды</h2>
+${renderQrList(qr)}`)
 }
 
 /** CSV под Excel с русскими настройками — как generations.csv на панели. */

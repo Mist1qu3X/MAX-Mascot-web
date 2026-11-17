@@ -17,7 +17,8 @@
  * панели (`npm run sticker` в MAX_PO) база не нужна, и драйвера у него нет.
  *
  * Здесь же — нажатия кнопок на странице стикера (таблица sticker_clicks):
- * «Сохранить картинку» и «Создать стикер» — переход в бота.
+ * «Сохранить картинку» и «Создать стикер» — переход в бота. И QR-коды
+ * (таблица qr_codes): картинка маскота за каждой ссылкой из QR.
  */
 
 const DB_HOST = process.env.DB_HOST ?? ''
@@ -65,6 +66,25 @@ CREATE TABLE IF NOT EXISTS sticker_clicks (
   KEY clicked_at (clicked_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='Нажатия кнопок на странице стикера: одна строка — одно нажатие'`
+
+/*
+ * QR-коды с панели: картинка маскота за каждой ссылкой. Раньше картинки жили
+ * только в памяти сервера и пропадали при перезапуске и при наплыве — QR на
+ * руках у человека переставал открываться. Теперь каждая ложится сюда, и
+ * ссылка из QR работает и потом. Исходные фото посетителей (/upload) сюда
+ * не попадают — только готовые маскоты.
+ */
+const QR_SCHEMA = `
+CREATE TABLE IF NOT EXISTS qr_codes (
+  id         VARCHAR(32)  NOT NULL COMMENT 'id картинки — тот же, что в ссылке из QR (/?i=/i/<id>)',
+  created_at DATETIME(3)  NOT NULL COMMENT 'когда панель получила ссылку для QR, UTC',
+  type       VARCHAR(32)  NOT NULL COMMENT 'тип картинки: image/jpeg, image/png',
+  size       INT UNSIGNED NOT NULL COMMENT 'размер картинки, байт',
+  image      MEDIUMBLOB   NOT NULL COMMENT 'картинка маскота',
+  PRIMARY KEY (id),
+  KEY created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  COMMENT='QR-коды с панели: одна строка — один маскот и его картинка'`
 
 let pool = null
 let ready = null
@@ -140,22 +160,28 @@ async function migrate() {
 }
 
 /*
- * Таблица нажатий заводится отдельно от основной: если с ней что-то не так,
- * статистика генераций от этого не ломается.
+ * Таблицы нажатий и QR-кодов заводятся отдельно от основной: если с какой-то
+ * из них что-то не так, статистика генераций от этого не ломается.
  */
-let clicksReady = null
+const extraTables = new Map()
 
-function ensureClicksTable() {
-  if (!clicksReady) {
-    clicksReady = ensureReady()
-      .then(() => pool.query(CLICKS_SCHEMA))
+function ensureTable(schema) {
+  if (!extraTables.has(schema)) {
+    extraTables.set(schema, ensureReady()
+      .then(() => pool.query(schema))
       .catch((error) => {
-        clicksReady = null
+        extraTables.delete(schema)
         throw error
-      })
+      }))
   }
-  return clicksReady
+  return extraTables.get(schema)
 }
+
+const ensureClicksTable = () => ensureTable(CLICKS_SCHEMA)
+const ensureQrTable = () => ensureTable(QR_SCHEMA)
+
+/** Как часто повторяем то, что не вышло: переподключение и запись из очередей. */
+const RETRY_MS = 30_000
 
 /**
  * Нажатия, которые ещё не легли в базу. Телефон шлёт нажатие один раз и
@@ -165,7 +191,6 @@ function ensureClicksTable() {
  */
 const clickQueue = []
 const CLICK_QUEUE_MAX = 5000
-const CLICK_RETRY_MS = 30_000
 let flushing = false
 
 /** Записать нажатие. Ничего не ждёт: ответ телефону от базы не зависит. */
@@ -199,12 +224,83 @@ async function flushClicks() {
   }
 }
 
+/**
+ * Картинки за QR-кодами, которые ещё не легли в базу. Держим немного: каждая
+ * весит около мегабайта, а пока база лежит, они и так отдаются из памяти.
+ */
+const qrQueue = []
+const QR_QUEUE_MAX = 40
+/** MEDIUMBLOB вмещает 16 МБ; таких картинок не бывает, но проверяем. */
+const QR_MAX_BYTES = 15 * 1024 * 1024
+let qrFlushing = false
+
+/**
+ * Сохранить картинку за QR-кодом. Ничего не ждёт: телефон получает картинку
+ * из памяти, а в базу она уходит фоном — чтобы ссылка из QR работала и после
+ * перезапуска сервера.
+ */
+export function saveQrImage(id, createdAt, type, body) {
+  if (!DB_HOST) return
+  if (body.length > QR_MAX_BYTES) {
+    console.error(`[qr] ${id}: картинка ${Math.round(body.length / 1024 / 1024)} МБ — в базу не влезет`)
+    return
+  }
+  qrQueue.push({ id, createdAt, type, body })
+  while (qrQueue.length > QR_QUEUE_MAX) {
+    console.error(`[qr] ${qrQueue.shift().id}: база долго не отвечает, картинку не сохраним`)
+  }
+  void flushQr()
+}
+
+async function flushQr() {
+  if (qrFlushing) return
+  qrFlushing = true
+  try {
+    while (qrQueue.length > 0) {
+      // Вынимаем сразу: пока идёт запись, переполнение очереди трогает только
+      // ждущие картинки, а не ту, что пишется.
+      const item = qrQueue.shift()
+      try {
+        await ensureQrTable()
+        await pool.query('INSERT IGNORE INTO qr_codes (id, created_at, type, size, image) VALUES (?, ?, ?, ?, ?)',
+          [item.id, item.createdAt, item.type, item.body.length, item.body])
+        console.log(`[qr] ${item.id} сохранён, ${Math.round(item.body.length / 1024)} КБ`)
+      } catch (error) {
+        // Нет связи — повторим по таймеру. Отказ самой базы на эту строку
+        // повтором не лечится: пропускаем, чтобы не держать остальных.
+        if (error?.fatal || !error?.sqlMessage) {
+          qrQueue.unshift(item)
+          console.error(`[qr] ${item.id} не сохранён (${qrQueue.length} в очереди), повторим:`, error?.message ?? error)
+          return
+        }
+        console.error(`[qr] ${item.id} не сохранён, пропускаем:`, error.message)
+      }
+    }
+  } finally {
+    qrFlushing = false
+  }
+}
+
+/** Картинка за QR-кодом из базы — когда в памяти сервера её уже нет. */
+export async function loadQrImage(id) {
+  if (!DB_HOST) return null
+  await ensureQrTable()
+  const [rows] = await pool.query('SELECT type, image FROM qr_codes WHERE id = ?', [id])
+  return rows[0] ? { type: rows[0].type, body: rows[0].image } : null
+}
+
 /** Подключаемся сразу при старте, не дожидаясь первой строки. */
 export function startStats() {
   if (!DB_HOST) return
   ensureReady().catch(() => {})
+  // Раз в RETRY_MS: переподключиться, если база не ответила при старте (иначе
+  // /health так и показывал бы «нет связи»), и дописать ждущее в очередях.
   // unref — таймер не держит процесс, если сервер решат остановить.
-  setInterval(() => void flushClicks(), CLICK_RETRY_MS).unref()
+  setInterval(() => {
+    if (state !== 'ok') ensureReady().catch(() => {})
+    void flushClicks()
+    void flushQr()
+  }, RETRY_MS).unref()
 }
 
 const UID = /^[\w-]{8,64}$/
@@ -279,12 +375,44 @@ export async function readStats({ limit = 200 } = {}) {
     `SELECT ${mskDay('started_at')} AS day, ${TOTALS} FROM generations GROUP BY day ORDER BY day DESC LIMIT 60`)
   const [models] = await pool.query(`SELECT model, ${TOTALS} FROM generations GROUP BY model ORDER BY total DESC`)
   const [recent] = await pool.query(`SELECT * FROM (${NUMBERED}) numbered ORDER BY n DESC LIMIT ?`, [limit])
-  // Нажатия не прочитались — страница всё равно покажет генерации.
+  // Нажатия или QR не прочитались — страница всё равно покажет генерации.
   const clicks = await readClicks().catch((error) => {
     console.error('[статистика] нажатия не прочитались:', error?.message ?? error)
     return null
   })
-  return { totals, errors, days, models, recent, clicks }
+  const qr = await readQrCodes(limit).catch((error) => {
+    console.error('[статистика] QR-коды не прочитались:', error?.message ?? error)
+    return null
+  })
+  return { totals, errors, days, models, recent, clicks, qr }
+}
+
+/*
+ * Номер QR-кода — по порядку создания, как номер генерации: 1, 2, 3… Нажатия
+ * берём из sticker_clicks по id картинки. Саму картинку здесь не читаем —
+ * она тяжёлая, а списку нужен только размер.
+ */
+const NUMBERED_QR = `SELECT ROW_NUMBER() OVER (ORDER BY q.created_at, q.id) AS n, q.id, q.created_at, q.size,
+    COALESCE(c.save_clicks, 0) AS save_clicks, COALESCE(c.bot_clicks, 0) AS bot_clicks
+  FROM qr_codes q
+  LEFT JOIN (SELECT shot, SUM(button = 'save') AS save_clicks, SUM(button = 'bot') AS bot_clicks
+             FROM sticker_clicks GROUP BY shot) c ON c.shot = q.id`
+
+/** Последние QR-коды для страницы статистики и сколько всего места они занимают. */
+async function readQrCodes(limit) {
+  await ensureQrTable()
+  await ensureClicksTable()
+  const [[summary]] = await pool.query('SELECT COUNT(*) AS n, SUM(size) AS bytes FROM qr_codes')
+  const [rows] = await pool.query(`SELECT * FROM (${NUMBERED_QR}) numbered ORDER BY n DESC LIMIT ?`, [limit])
+  return { summary, rows }
+}
+
+/** Один QR-код — для его страницы в статистике. Нет такого — null. */
+export async function readQrCode(id) {
+  await ensureQrTable()
+  await ensureClicksTable()
+  const [rows] = await pool.query(`SELECT * FROM (${NUMBERED_QR}) numbered WHERE id = ?`, [id])
+  return rows[0] ?? null
 }
 
 /**

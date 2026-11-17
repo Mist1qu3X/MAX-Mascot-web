@@ -36,11 +36,12 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
-  allGenerations, cleanRows, readStats, recordClick, saveGenerations, startStats, statsEnabled, statsState,
+  allGenerations, cleanRows, loadQrImage, readQrCode, readStats, recordClick, saveGenerations, saveQrImage,
+  startStats, statsEnabled, statsState,
 } from './stats.mjs'
 import {
-  SIGN_OUT_COOKIE, passwordOk, renderCsv, renderSignIn, renderStats, renderUnavailable, signInCookie, signedIn,
-  statsPageEnabled,
+  SIGN_OUT_COOKIE, passwordOk, renderCsv, renderQrMissing, renderQrPage, renderSignIn, renderStats,
+  renderUnavailable, signInCookie, signedIn, statsPageEnabled,
 } from './statspage.mjs'
 
 const PORT = Number(process.env.PORT ?? 8787)
@@ -116,6 +117,12 @@ const clickable = new Map()
 const CLICKABLE_KEEP = 10_000
 /** Больше этого на одну картинку не засчитываем: столько руками не нажимают. */
 const CLICKS_PER_SHOT = 20
+
+function allowClicks(id) {
+  if (clickable.has(id)) return
+  clickable.set(id, { save: 0, bot: 0 })
+  if (clickable.size > CLICKABLE_KEEP) clickable.delete(clickable.keys().next().value)
+}
 
 /** Домашние сети: 10/8, 172.16/12, 192.168/16. Только сюда попадёт телефон. */
 function isLan(ip) {
@@ -200,6 +207,8 @@ function keep(url) {
     note({ kind, ms: Date.now() - entry.startedAt, bytes: body.length })
     settle({ body, type })
     evict()
+    // И в базу, фоном: ссылка из QR должна открываться и после перезапуска.
+    saveQrImage(id, new Date(entry.startedAt), type, body)
     return true
   }
   entry.startedAt = Date.now()
@@ -244,6 +253,54 @@ function keep(url) {
 }
 
 /**
+ * Картинка за QR-кодом из базы — когда её нет в памяти: сервер перезапускался
+ * или вытеснил её при наплыве. Кладём обратно в память: страница стикера
+ * берёт картинку дважды (показать и сохранить), второй раз база не нужна.
+ */
+async function restore(id) {
+  if (!/^[\w-]{1,32}$/.test(id)) return null
+  let saved
+  try {
+    saved = await loadQrImage(id)
+  } catch (error) {
+    console.error(`[qr] ${id}: из базы не достали:`, error?.message ?? error)
+    return null
+  }
+  if (!saved) return null
+  // Пока ждали базу, ту же картинку мог достать параллельный запрос.
+  const again = shots.get(id)
+  if (again) return again
+  const entry = { size: saved.body.length, source: null, pending: Promise.resolve(saved) }
+  shots.set(id, entry)
+  held += entry.size
+  evict()
+  // Страница снова открывается — нажатия на ней снова засчитываются.
+  allowClicks(id)
+  return entry
+}
+
+/**
+ * QR-код ссылки для страницы статистики — как на экране панели: коррекция M,
+ * поле в 3 модуля. Панель рисует библиотекой qrcode, здесь — qrcode-generator
+ * без зависимостей: узор может отличаться, ссылка внутри та же.
+ *
+ * Подгружается, только когда открывают страницу QR: серверу панели
+ * (`npm run sticker` в MAX_PO) библиотека не нужна, и её там нет.
+ */
+async function qrSvg(text) {
+  try {
+    const { default: qrcode } = await import('qrcode-generator')
+    const qr = qrcode(0, 'M')
+    qr.addData(text)
+    qr.make()
+    return qr.createSvgTag({ cellSize: 8, margin: 24, scalable: true, title: 'QR-код' })
+  } catch (error) {
+    console.error('[qr] QR-код не нарисовался:', error?.message ?? error)
+    return null
+  }
+}
+
+/**
  * Выбрасываем самые старые, пока не уложимся в оба предела.
  * Map хранит порядок вставки, поэтому первый ключ — самый давний.
  */
@@ -282,8 +339,7 @@ const server = createServer(async (req, res) => {
       // Расширения в адресе нет намеренно: тип узнаётся только после
       // скачивания, а ответ нужен раньше. Тип отдаём заголовком.
       const id = keep(source)
-      clickable.set(id, { save: 0, bot: 0 })
-      if (clickable.size > CLICKABLE_KEEP) clickable.delete(clickable.keys().next().value)
+      allowClicks(id)
       const file = `/i/${id}`
       const origin = publicOrigin()
       send(res, 200, JSON.stringify({
@@ -369,7 +425,9 @@ const server = createServer(async (req, res) => {
   // Страница статистики и выгрузка CSV — под паролем STATS_PASSWORD,
   // см. server/statspage.mjs.
   const statsPaths = ['/stats', '/stats.csv', '/stats/login', '/stats/logout']
-  if (statsPaths.includes(url.pathname) && (req.method === 'GET' || url.pathname === '/stats/login')) {
+  // Страница одного QR-кода: сам QR, картинка и ссылка.
+  const qrPage = /^\/stats\/qr\/([\w-]{1,32})$/.exec(url.pathname)
+  if ((statsPaths.includes(url.pathname) || qrPage) && (req.method === 'GET' || url.pathname === '/stats/login')) {
     const text = { 'content-type': 'text/plain; charset=utf-8' }
     if (!statsPageEnabled()) return send(res, 404, 'страница статистики выключена: не задан STATS_PASSWORD', text)
     const html = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
@@ -396,6 +454,13 @@ const server = createServer(async (req, res) => {
 
     if (!statsEnabled()) return send(res, 503, renderUnavailable(statsState()), html)
     try {
+      if (qrPage) {
+        const qr = await readQrCode(qrPage[1])
+        if (!qr) return send(res, 404, renderQrMissing(), html)
+        // Ссылка — ровно та, что была в QR на панели (её собирает /shot).
+        const link = `${publicOrigin() ?? `http://${req.headers.host}`}/?i=/i/${qr.id}`
+        return send(res, 200, renderQrPage(qr, link, await qrSvg(link)), html)
+      }
       if (url.pathname === '/stats.csv') {
         return send(res, 200, renderCsv(await allGenerations()), {
           'content-type': 'text/csv; charset=utf-8',
@@ -554,7 +619,9 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname.startsWith('/i/')) {
     // Расширение в адресе не обязательно, но и не мешает — отрезаем.
-    const shot = shots.get(url.pathname.slice(3).replace(/\.[a-z0-9]+$/i, ''))
+    const id = url.pathname.slice(3).replace(/\.[a-z0-9]+$/i, '')
+    // Нет в памяти — сервер перезапускался или картинку вытеснили: берём из базы.
+    const shot = shots.get(id) ?? await restore(id)
     if (!shot) return send(res, 404, 'нет такой картинки')
 
     /*
