@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "mysql2": "^3.24.6",
-    "qrcode-generator": "^2.0.4"
+    "qrcode-generator": "^2.0.4",
+    "sharp": "^0.35.5"
   }
 }

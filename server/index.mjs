@@ -43,6 +43,7 @@ import {
   SIGN_OUT_COOKIE, passwordOk, renderCsv, renderQrMissing, renderQrPage, renderSignIn, renderStats,
   renderUnavailable, signInCookie, signedIn, statsPageEnabled,
 } from './statspage.mjs'
+import { lighten, lightenState } from './lighten.mjs'
 
 const PORT = Number(process.env.PORT ?? 8787)
 /** Задан — значит сервер публичный и адреса строим от домена, а не от IP. */
@@ -94,8 +95,10 @@ const TIMINGS_KEEP = 30
 function note(record) {
   timings.push({ at: new Date().toISOString(), ...record })
   if (timings.length > TIMINGS_KEEP) timings.shift()
-  const { kind, ms, bytes, host } = record
-  console.log(`[${kind}] ${ms} мс` + (bytes ? `, ${(bytes / 1024).toFixed(0)} КБ` : '') +
+  const { kind, ms, bytes, original, host } = record
+  const kb = (n) => `${(n / 1024).toFixed(0)} КБ`
+  console.log(`[${kind}] ${ms} мс` +
+    (original && original !== bytes ? `, ${kb(original)} → ${kb(bytes)}` : bytes ? `, ${kb(bytes)}` : '') +
     (host ? `, ${host}` : ''))
 }
 /**
@@ -202,13 +205,22 @@ function keep(url) {
   entry.fill = (body, type, kind) => {
     if (entry.filled) return false
     entry.filled = true
-    entry.size = body.length
-    held += body.length
-    note({ kind, ms: Date.now() - entry.startedAt, bytes: body.length })
-    settle({ body, type })
-    evict()
-    // И в базу, фоном: ссылка из QR должна открываться и после перезапуска.
-    saveQrImage(id, new Date(entry.startedAt), type, body)
+    // Телефону и в базу — облегчённая копия (см. lighten.mjs): 2048 px на
+    // 1–1,5 МБ ужимаются до 1080 px на пару сотен КБ за доли секунды. Кто
+    // ждёт картинку, дождётся уже её.
+    void lighten(body, type).then((light) => {
+      note({ kind, ms: Date.now() - entry.startedAt, bytes: light.body.length, original: body.length })
+      // Пока ужимали, запись могли вытеснить: тогда место в памяти уже не
+      // её, но тому, кто ждёт картинку, и базе она всё равно нужна.
+      if (shots.get(id) === entry) {
+        entry.size = light.body.length
+        held += entry.size
+      }
+      settle(light)
+      evict()
+      // И в базу, фоном: ссылка из QR должна открываться и после перезапуска.
+      saveQrImage(id, new Date(entry.startedAt), light.type, light.body)
+    })
     return true
   }
   entry.startedAt = Date.now()
@@ -267,10 +279,12 @@ async function restore(id) {
     return null
   }
   if (!saved) return null
+  // QR, выданные до облегчения, лежат в базе тяжёлыми — ужимаем при доставании.
+  const light = await lighten(saved.body, saved.type)
   // Пока ждали базу, ту же картинку мог достать параллельный запрос.
   const again = shots.get(id)
   if (again) return again
-  const entry = { size: saved.body.length, source: null, pending: Promise.resolve(saved) }
+  const entry = { size: light.body.length, source: null, pending: Promise.resolve(light) }
   shots.set(id, entry)
   held += entry.size
   evict()
@@ -485,6 +499,8 @@ const server = createServer(async (req, res) => {
       // База статистики: ok, выключена или нет связи. На живость сервера не
       // влияет — страница и QR без базы работают.
       stats: statsState(),
+      // Облегчение картинок для телефона (lighten.mjs): включено или нет sharp.
+      light: lightenState(),
       // Последние скачивания: сразу видно, кто тормозит на реальном трафике.
       timings,
     }),
