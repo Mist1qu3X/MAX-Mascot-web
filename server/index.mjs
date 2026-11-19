@@ -517,9 +517,15 @@ const server = createServer(async (req, res) => {
       if (views.size > CLICKABLE_KEEP) views.delete(views.keys().next().value)
       const ms = Math.max(0, Math.round(Number(view.ms) || 0))
       const box = /^\d{1,5}x\d{1,5}$/.test(view.box ?? '') ? `, круг ${view.box}` : ''
+      // На Android маскот рисуется на холсте; px — цвет его середины
+      // (0,0,0 — чёрный круг), gpu — видеочип телефона.
+      const canvas = view.mode === 'canvas'
+        ? `, холст${/^\d{1,3},\d{1,3},\d{1,3}$/.test(view.px ?? '') ? ` (середина ${view.px})` : ''}` : ''
+      const gpu = typeof view.gpu === 'string' && view.gpu
+        ? `, видеочип ${view.gpu.replace(/[^\w ().,:/+-]/g, '').slice(0, 80)}` : ''
       console.log(`[страница] ${shot} ${shortUa(req.headers['user-agent'])}: ` +
         (view.shown ? `показан за ${ms} мс` : `НЕ показан за ${ms} мс`) +
-        (view.inline ? ', в странице' : ', отдельным запросом') + box)
+        (view.inline ? ', в странице' : ', отдельным запросом') + box + canvas + gpu)
     }
     return send(res, 204, '')
   }

@@ -56,10 +56,16 @@
      становится цветом круга ещё на сервере (lighten в server/lighten.mjs):
      смешивание слоёв здесь, mix-blend-mode, на части Android-телефонов
      не рисовалось — круг оставался пустым. */
-  .inner{border-radius:50%;background:rgb(12 1 25);overflow:hidden;aspect-ratio:1;
+  .inner{position:relative;border-radius:50%;background:rgb(12 1 25);overflow:hidden;aspect-ratio:1;
     display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center}
   .wait{color:var(--muted);font-size:14px;line-height:1.4;text-align:center;margin:0;padding:0 22px;max-width:76%}
   .inner img{width:100%;height:100%;object-fit:cover;display:block}
+  /* Android: маскот нарисован на холсте (см. paint() в скрипте), картинка
+     остаётся поверх прозрачной — ради «Скачать изображение» по долгому
+     нажатию. Холст уже круглый, обрезка рамкой ему не нужна. */
+  .inner canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .inner.drawn{overflow:visible}
+  .inner.drawn img{position:relative;z-index:1;opacity:0}
   .spin{width:38px;height:38px;border:4px solid rgb(255 255 255/.18);border-top-color:#7a36ff;
     border-radius:50%;animation:r 900ms linear infinite}
   @keyframes r{to{transform:rotate(360deg)}}
@@ -238,6 +244,7 @@
       const body = JSON.stringify({
         shot: shotId, shown: shown, ms: Math.round(performance.now()), inline: Boolean(inline),
         box: r ? Math.round(r.width) + 'x' + Math.round(r.height) : '',
+        mode: paintMode, px: centerPx, gpu: gpuName(),
       })
       if (!(navigator.sendBeacon && navigator.sendBeacon('/stats/view', body))) {
         fetch('/stats/view', { method: 'POST', body: body, keepalive: true }).catch(() => {})
@@ -247,6 +254,70 @@
     }
   }
   setTimeout(() => report(false), 15000)
+
+  /** Видеочип телефона — для отчёта: сбои отрисовки бывают на конкретных. */
+  function gpuName() {
+    try {
+      const gl = document.createElement('canvas').getContext('webgl')
+      const ext = gl && gl.getExtension('WEBGL_debug_renderer_info')
+      return ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)).slice(0, 80) : ''
+    } catch (e) {
+      return ''
+    }
+  }
+
+  /*
+   * На Android маскота дорисовываем на холсте. Chrome на части Android-
+   * телефонов (видели на Android 10) картинку получает и разбирает, но не
+   * рисует — круг остаётся пустым: картинки страницы он выводит через
+   * видеочип особым путём, и на старых драйверах этот путь сбоит. Холст с
+   * willReadFrequently рисуется процессором — обычными пикселями, в обход.
+   * Сама картинка остаётся поверх, прозрачная: долгое нажатие на ней
+   * по-прежнему даёт «Скачать изображение». На айфоне сбоя нет — там как есть.
+   */
+  const ANDROID = /Android/i.test(navigator.userAgent)
+  let paintMode = 'img'
+  let centerPx = ''
+  function paint(img) {
+    if (!ANDROID) return
+    try {
+      const side = Math.min(img.naturalWidth, img.naturalHeight)
+      const size = Math.round(Math.min(frame.clientWidth * (window.devicePixelRatio || 1), side))
+      if (!size) return
+      const c = frame.querySelector('canvas') || document.createElement('canvas')
+      c.width = c.height = size
+      const g = c.getContext('2d', { willReadFrequently: true })
+      g.save()
+      g.beginPath()
+      g.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2)
+      g.clip()
+      g.fillStyle = 'rgb(12, 1, 25)'
+      g.fillRect(0, 0, size, size)
+      // Как object-fit: cover.
+      const k = Math.max(size / img.naturalWidth, size / img.naturalHeight)
+      const w = img.naturalWidth * k
+      const h = img.naturalHeight * k
+      g.drawImage(img, (size - w) / 2, (size - h) / 2, w, h)
+      g.restore()
+      c.setAttribute('aria-hidden', 'true')
+      if (!c.parentNode) frame.insertBefore(c, frame.firstChild)
+      frame.classList.add('drawn')
+      paintMode = 'canvas'
+      // Цвет середины — для отчёта: чёрный значит, что и холст не помог.
+      try {
+        centerPx = Array.from(g.getImageData(size >> 1, size >> 1, 1, 1).data.slice(0, 3)).join(',')
+      } catch (e) {
+        centerPx = ''
+      }
+    } catch (e) {
+      // не вышло — остаётся обычная картинка
+    }
+  }
+  // Повернули телефон — круг другого размера, перерисовываем чётко.
+  window.addEventListener('resize', () => {
+    const pic = frame.querySelector('img')
+    if (paintMode === 'canvas' && pic) paint(pic)
+  })
 
   /**
    * Что сейчас в рамке и в подсказке — чтобы при смене языка перерисовать их
@@ -258,6 +329,7 @@
 
   function renderFrame() {
     if (frameState === 'img') return // в рамке картинка, текста там нет
+    frame.classList.remove('drawn')
     if (frameState === 'errLink' || frameState === 'errImage') {
       frame.innerHTML = '<div class="err">' + T[frameState] + '</div>'
       return
@@ -302,6 +374,7 @@
     frameState = 'img'
     inline.alt = T.mascotAlt
     const shown = () => {
+      paint(inline)
       save.disabled = false
       prepare()
       report(true)
@@ -341,6 +414,7 @@
       frameState = 'img'
       frame.innerHTML = ''
       frame.appendChild(img)
+      paint(img)
       save.disabled = false
       prepare()
       report(true)
