@@ -465,7 +465,10 @@
       const [pic, logo] = await Promise.all([loadImage(url), loadImage(LOGO_SRC)])
       const c = document.createElement('canvas')
       c.width = c.height = OUT
-      const g = c.getContext('2d')
+      // willReadFrequently — холст рисует процессор, а не видеочип: на части
+      // Android-телефонов (Chrome, Android 10) холст на видеочипе собирал
+      // картинку без маскота — в превью «Сохранить» был пустой тёмный круг.
+      const g = c.getContext('2d', { willReadFrequently: true })
       // Логотип ужимается втрое — просим сглаживание получше, иначе в Safari
       // у букв может появиться лесенка. Chrome рисует одинаково с ним и без.
       g.imageSmoothingQuality = 'high'
@@ -491,9 +494,10 @@
       g.arc(cx, cy, R, 0, Math.PI * 2)
       g.fill()
 
-      // Внутри — фон и маскот, обрезка как object-fit: cover. lighten берёт
-      // максимум по каждому каналу: чёрный фон картинки становится цветом
-      // круга, всё, что светлее, остаётся как было.
+      // Внутри — фон и маскот, обрезка как object-fit: cover. Фон маскота
+      // уже цвета круга — его заливает сервер (lighten в server/lighten.mjs).
+      // Раньше это смешивание делал здесь globalCompositeOperation 'lighten',
+      // и на тех же Android-телефонах маскот от него пропадал совсем.
       const r = R - ring
       g.save()
       g.beginPath()
@@ -501,7 +505,6 @@
       g.clip()
       g.fillStyle = BG
       g.fillRect(cx - r, cy - r, 2 * r, 2 * r)
-      g.globalCompositeOperation = 'lighten'
       const s = Math.max((2 * r) / pic.naturalWidth, (2 * r) / pic.naturalHeight)
       const w = pic.naturalWidth * s
       const h = pic.naturalHeight * s
