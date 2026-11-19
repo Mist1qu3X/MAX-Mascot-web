@@ -9,15 +9,24 @@
  * видел на странице пустой круг. Чем меньше файл, тем реже он застревает.
  *
  * Короткая сторона — 1080, длинная — по пропорции; меньшие не увеличиваем.
- * Прозрачное — на чёрный: страница и сохраняемая картинка кладут маскота
- * через lighten, и чёрный фон становится цветом круга, как у обычных кадров.
- * JPEG — а не WebP: его открывает любой телефон, в том числе старый айфон.
+ * Прозрачное — на чёрный, а потом lighten с цветом круга: максимум по каждому
+ * каналу, и чёрный фон маскота становится цветом круга прямо в файле. Раньше
+ * это смешивание делала страница (mix-blend-mode), и на части Android-
+ * телефонов картинка в круге не рисовалась вовсе. JPEG — а не WebP: его
+ * открывает любой телефон, в том числе старый айфон.
  *
  * sharp необязателен: на панели (`npm run sticker` в MAX_PO) его нет, и тогда
  * картинки идут как есть — как было до облегчения.
  */
 const SIDE = 1080
 const QUALITY = 85
+/** Фон круга на странице и на панели — rgb(12, 1, 25). */
+const CIRCLE = { r: 12, g: 1, b: 25 }
+/**
+ * Метка обработанной картинки (в EXIF). Есть — картинку уже ужимали этой
+ * версией, второй раз пережимать незачем: только потеряем в качестве.
+ */
+const MARK = 'max-mascot light 2'
 
 /** Модуль sharp или null, если его нет. Грузим один раз, при старте. */
 const sharpReady = import('sharp')
@@ -48,17 +57,17 @@ export async function lighten(body, type) {
   const sharp = await sharpReady
   if (!sharp) return { body, type }
   try {
-    const { width = 0, height = 0, format } = await sharp(body).metadata()
-    // Уже лёгкая (JPEG не крупнее нужного) — пережимать незачем: только
-    // потеряем в качестве. Так бывает с тем, что уже ужимали.
-    if (format === 'jpeg' && Math.min(width, height) <= SIDE) return { body, type }
+    const { exif } = await sharp(body).metadata()
+    if (exif?.includes(MARK)) return { body, type }
 
     const light = await sharp(body)
       .resize({ width: SIDE, height: SIDE, fit: 'outside', withoutEnlargement: true })
       .flatten({ background: '#000000' })
+      .composite([{ input: { create: { width: 8, height: 8, channels: 3, background: CIRCLE } }, tile: true, blend: 'lighten' }])
       .jpeg({ quality: QUALITY, mozjpeg: true })
+      .withExif({ IFD0: { Software: MARK } })
       .toBuffer()
-    return light.length < body.length ? { body: light, type: 'image/jpeg' } : { body, type }
+    return { body: light, type: 'image/jpeg' }
   } catch (error) {
     console.warn('[облегчение] не вышло, отдаём как есть:', error?.message ?? error)
     return { body, type }

@@ -315,6 +315,60 @@ async function qrSvg(text) {
 }
 
 /**
+ * Маскота кладём прямо в страницу стикера — картинкой в разметке (data-URL).
+ *
+ * Раньше страница приходила с пустым кругом, а картинку догружал скрипт
+ * отдельным запросом. На айфонах это работало, а на части Android-телефонов
+ * круг оставался пустым: сканер QR открывает ссылку в своём браузере, где
+ * скрипт может не отработать, второй запрос может застрять. Теперь маскот
+ * приходит вместе со страницей и виден даже без скрипта; облегчённый весит
+ * 40–80 КБ, страница от этого почти не толстеет.
+ *
+ * Картинки ещё нет (посетитель успел раньше панели) или она тяжёлая (сервер
+ * без sharp) — отдаём страницу как раньше: скрипт догрузит сам.
+ */
+const INLINE_MAX = 400 * 1024
+const EMPTY_FRAME = '<div class="inner" id="frame"><div class="spin"></div></div>'
+
+async function withMascot(page, link) {
+  const id = /^\/i\/([\w-]{1,32})$/.exec(link ?? '')?.[1]
+  if (!id || !page.includes(EMPTY_FRAME)) return page
+  const shot = shots.get(id) ?? await restore(id)
+  if (!shot) return page
+  let timer
+  const ready = await Promise.race([
+    shot.pending.then((value) => value, () => null),
+    new Promise((resolve) => { timer = setTimeout(() => resolve(null), WAIT_FOR_COPY_MS) }),
+  ])
+  clearTimeout(timer)
+  if (!ready || ready.body.length > INLINE_MAX || !/^image\/(jpeg|png|webp)$/.test(ready.type)) return page
+  const img = `<img id="mascot" src="data:${ready.type};base64,${ready.body.toString('base64')}" alt="Ваш маскот">`
+  return page.replace(EMPTY_FRAME, `<div class="inner" id="frame">${img}</div>`)
+}
+
+/**
+ * Телефон и браузер одной строкой — для лога показов: «Android 14,
+ * SamsungBrowser/27.0» или «iOS 18.5, Version/18.5». Последний токен —
+ * встроенный браузер приложения, если он себя называет.
+ */
+function shortUa(ua = '') {
+  const os = /Android [\d.]+/.exec(ua)?.[0]
+    ?? (/iPhone|iPad/.test(ua) ? `iOS ${(/OS (\d+(?:_\d+)*)/.exec(ua)?.[1] ?? '').replace(/_/g, '.')}` : null)
+    ?? /Windows|Mac OS X|Linux/.exec(ua)?.[0] ?? '?'
+  // По старшинству, а не по месту в строке: во встроенных браузерах Android
+  // впереди стоит ничего не говорящий «Version/4.0», а суть — дальше.
+  const browser = BROWSERS.map((name) => new RegExp(`${name}/[\\d.]+`).exec(ua)?.[0]).find(Boolean) ?? '?'
+  const app = ua.trim().split(' ').pop()
+  const extra = /^(Safari|Mobile)\b/.test(app) || app.includes(browser.split('/')[0]) ? '' : `, ${app}`
+  return `${os}, ${browser}${/; wv\)/.test(ua) ? ' webview' : ''}${extra}`.slice(0, 120)
+}
+const BROWSERS = ['SamsungBrowser', 'YaBrowser', 'MiuiBrowser', 'HuaweiBrowser', 'HeyTapBrowser', 'OPR', 'Firefox',
+  'EdgA', 'CriOS', 'FxiOS', 'Chrome', 'Version']
+/** Отчётов о показе с одной страницы — не больше (перезагрузки, вкладки). */
+const VIEWS_PER_SHOT = 5
+const views = new Map()
+
+/**
  * Выбрасываем самые старые, пока не уложимся в оба предела.
  * Map хранит порядок вставки, поэтому первый ключ — самый давний.
  */
@@ -432,6 +486,40 @@ const server = createServer(async (req, res) => {
     if (counts && (button === 'save' || button === 'bot') && counts[button] < CLICKS_PER_SHOT) {
       counts[button] += 1
       recordClick(button, click.shot)
+    }
+    return send(res, 204, '')
+  }
+
+  /*
+   * Страница стикера сообщает, показался ли маскот и за сколько, — чтобы
+   * видеть, на каких телефонах и в каких браузерах он не показывается.
+   * Только в лог, без IP и без базы: «[страница] 2dafbc4c74ae Android 14,
+   * SamsungBrowser/27.0: показан за 412 мс, в странице».
+   */
+  if (req.method === 'POST' && url.pathname === '/stats/view') {
+    const chunks = []
+    let size = 0
+    for await (const chunk of req) {
+      size += chunk.length
+      if (size > 512) return send(res, 413, '')
+      chunks.push(chunk)
+    }
+    let view = null
+    try {
+      view = JSON.parse(Buffer.concat(chunks).toString())
+    } catch {
+      // не JSON — молча мимо
+    }
+    const shot = typeof view?.shot === 'string' ? view.shot : ''
+    const seen = views.get(shot) ?? 0
+    if (clickable.has(shot) && seen < VIEWS_PER_SHOT) {
+      views.set(shot, seen + 1)
+      if (views.size > CLICKABLE_KEEP) views.delete(views.keys().next().value)
+      const ms = Math.max(0, Math.round(Number(view.ms) || 0))
+      const box = /^\d{1,5}x\d{1,5}$/.test(view.box ?? '') ? `, круг ${view.box}` : ''
+      console.log(`[страница] ${shot} ${shortUa(req.headers['user-agent'])}: ` +
+        (view.shown ? `показан за ${ms} мс` : `НЕ показан за ${ms} мс`) +
+        (view.inline ? ', в странице' : ', отдельным запросом') + box)
     }
     return send(res, 204, '')
   }
@@ -698,11 +786,17 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+    let page
     try {
-      return send(res, 200, await readFile(PAGE), { 'content-type': 'text/html; charset=utf-8' })
+      page = await readFile(PAGE, 'utf8')
     } catch {
       return send(res, 500, 'страница не найдена: ' + PAGE)
     }
+    return send(res, 200, await withMascot(page, url.searchParams.get('i')), {
+      'content-type': 'text/html; charset=utf-8',
+      // Страница своя у каждого QR и с картинкой внутри — не кэшируем.
+      'cache-control': 'no-store',
+    })
   }
 
   send(res, 404, 'не найдено')

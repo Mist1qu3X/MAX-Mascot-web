@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Не для поисковиков; сервер к тому же шлёт заголовок X-Robots-Tag. -->
 <meta name="robots" content="noindex, nofollow">
+<!-- Страница тёмная сама по себе. Без этого «тёмный режим» браузеров на
+     Android (Samsung Internet, MIUI, «затемнять сайты» в Chrome) берётся её
+     перекрашивать — и заодно картинку. -->
+<meta name="color-scheme" content="dark">
 <title>Ваш маскот — MAX</title>
 <style>
   /* Шрифт — как на панели. Файлы лежат в sticker/fonts, сервер отдаёт их
@@ -19,6 +23,7 @@
   @font-face{font-family:'VK Sans Display';font-weight:700;font-display:swap;
     src:url('fonts/VKSansDisplay-bold.woff2') format('woff2')}
   :root{
+    color-scheme:dark;
     --void:#0d001a; --ink:#fff; --muted:rgb(255 255 255/.62);
     --brand:linear-gradient(90deg,#a22bdf 0%,#7a36ff 25%,#547eff 50%,#30c4ff 75%,#27b2ff 100%);
   }
@@ -47,12 +52,14 @@
      подложкой под паддингом, внутри круглое окно. */
   .card{position:relative;border-radius:50%;padding:8px;
     background:linear-gradient(180deg,#8f02ff 0%,#1a87ff 100%);margin-bottom:20px}
-  /* Фон круга — как на панели и в сохранённой картинке. lighten берёт
-     максимум по каждому каналу: чёрный фон маскота становится цветом круга. */
+  /* Фон круга — как на панели и в сохранённой картинке. Чёрный фон маскота
+     становится цветом круга ещё на сервере (lighten в server/lighten.mjs):
+     смешивание слоёв здесь, mix-blend-mode, на части Android-телефонов
+     не рисовалось — круг оставался пустым. */
   .inner{border-radius:50%;background:rgb(12 1 25);overflow:hidden;aspect-ratio:1;
     display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center}
   .wait{color:var(--muted);font-size:14px;line-height:1.4;text-align:center;margin:0;padding:0 22px;max-width:76%}
-  .inner img{width:100%;height:100%;object-fit:cover;display:block;mix-blend-mode:lighten}
+  .inner img{width:100%;height:100%;object-fit:cover;display:block}
   .spin{width:38px;height:38px;border:4px solid rgb(255 255 255/.18);border-top-color:#7a36ff;
     border-radius:50%;animation:r 900ms linear infinite}
   @keyframes r{to{transform:rotate(360deg)}}
@@ -216,6 +223,31 @@
   }
   bot.addEventListener('click', () => count('bot'))
 
+  /*
+   * Показался ли маскот и за сколько — один раз на страницу. Сервер пишет это
+   * в лог вместе с телефоном и браузером: так видно, где маскот не
+   * показывается. Не показался за 15 секунд — тоже сообщаем.
+   */
+  let reported = false
+  function report(shown) {
+    if (reported || !shotId) return
+    reported = true
+    try {
+      const pic = frame.querySelector('img')
+      const r = pic && pic.getBoundingClientRect()
+      const body = JSON.stringify({
+        shot: shotId, shown: shown, ms: Math.round(performance.now()), inline: Boolean(inline),
+        box: r ? Math.round(r.width) + 'x' + Math.round(r.height) : '',
+      })
+      if (!(navigator.sendBeacon && navigator.sendBeacon('/stats/view', body))) {
+        fetch('/stats/view', { method: 'POST', body: body, keepalive: true }).catch(() => {})
+      }
+    } catch (e) {
+      // отчёт не должен мешать странице
+    }
+  }
+  setTimeout(() => report(false), 15000)
+
   /**
    * Что сейчас в рамке и в подсказке — чтобы при смене языка перерисовать их
    * на актуальном тексте, а не откатить к исходному.
@@ -259,39 +291,75 @@
     return
   }
 
-  // Без crossOrigin: kie.ai отдаёт результат с двух разных хостов, и на одном
-  // из них нет CORS-заголовков — с этим атрибутом картинка там просто не грузится.
-  // Пиксели мы не читаем, атрибут не нужен.
-  // Панель показывает QR сразу, а копию картинки сервер к этому моменту
-  // ещё качает. Обычно посетитель этого не замечает, но если качается
-  // долго, крутящийся кружок без объяснений выглядит поломкой.
-  const slow = setTimeout(() => {
-    frameState = 'wait'
-    renderFrame()
-  }, 6000)
-
-  const img = new Image()
-  img.alt = T.mascotAlt
-  img.onload = () => {
-    clearTimeout(slow)
+  /*
+   * Обычно маскот уже в разметке: сервер кладёт его прямо в страницу (см.
+   * withMascot в server/index.mjs), и он виден сразу — даже если этот скрипт
+   * не отработает. Тогда грузить отдельно нечего. Нет его там (сервер не
+   * дождался картинки или страницу открыли с панели) — грузим, как раньше.
+   */
+  let inline = frame.querySelector('img')
+  if (inline) {
     frameState = 'img'
-    frame.replaceChildren(img)
-    save.disabled = false
-    prepare()
+    inline.alt = T.mascotAlt
+    const shown = () => {
+      save.disabled = false
+      prepare()
+      report(true)
+    }
+    // Не сразу, а когда скрипт дочитается до конца: shown() зовёт prepare(),
+    // а та пишет в переменную, объявленную ниже, — до объявления это ошибка.
+    if (inline.complete && inline.naturalWidth) Promise.resolve().then(shown)
+    else {
+      inline.addEventListener('load', shown, { once: true })
+      inline.addEventListener('error', () => {
+        inline = null
+        frameState = 'spin'
+        renderFrame()
+        load()
+      }, { once: true })
+    }
+  } else {
+    load()
   }
-  img.onerror = () => {
-    clearTimeout(slow)
-    frameState = 'errImage'
-    renderFrame()
+
+  function load() {
+    // Без crossOrigin: kie.ai отдаёт результат с двух разных хостов, и на одном
+    // из них нет CORS-заголовков — с этим атрибутом картинка там просто не грузится.
+    // Пиксели мы не читаем, атрибут не нужен.
+    // Панель показывает QR сразу, а копию картинки сервер к этому моменту
+    // ещё качает. Обычно посетитель этого не замечает, но если качается
+    // долго, крутящийся кружок без объяснений выглядит поломкой.
+    const slow = setTimeout(() => {
+      frameState = 'wait'
+      renderFrame()
+    }, 6000)
+
+    const img = new Image()
+    img.alt = T.mascotAlt
+    img.onload = () => {
+      clearTimeout(slow)
+      frameState = 'img'
+      frame.innerHTML = ''
+      frame.appendChild(img)
+      save.disabled = false
+      prepare()
+      report(true)
+    }
+    img.onerror = () => {
+      clearTimeout(slow)
+      frameState = 'errImage'
+      renderFrame()
+    }
+    img.src = src
   }
-  img.src = src
 
   // Расширение берём из типа: собранная картинка — png, исходная — как отдал сервер.
   const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
   const nameFor = (type) => 'max-mascot.' + (EXT[type] || 'jpg')
 
   async function blob() {
-    const r = await fetch(src, { mode: 'cors' })
+    // Маскот в разметке — data-URL: fetch разбирает его на месте, без сети.
+    const r = await fetch(inline ? inline.src : src, { mode: 'cors' })
     if (!r.ok) throw new Error('HTTP ' + r.status)
     return r.blob()
   }
