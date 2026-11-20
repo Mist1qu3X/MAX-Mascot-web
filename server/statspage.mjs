@@ -160,6 +160,68 @@ function renderClicks(clicks) {
 <p class="muted" style="margin-top:8px">Считаем с ${since.day} в ${since.time.slice(0, 5)}.</p>`
 }
 
+/** Тип устройства — подписи как в админке QR-сервиса. */
+const DEVICE = { mobile: 'смартфон', tablet: 'планшет', desktop: 'компьютер', other: 'другое' }
+
+/**
+ * Переходы по QR-кодам заказчика (данные — из QR-сервиса, см. qrscans.mjs):
+ * итоги по каждому коду, по дням и последние сканирования.
+ */
+function renderQrScans(scans) {
+  if (!scans || scans.state === 'off') {
+    return `<p class="muted">Не настроено: серверу нужен ключ выгрузки QR-сервиса — переменная
+QR_STATS_KEY в Dokploy (общий пароль наших админок, см. qr.alavenir.tech/api/stats/docs).</p>`
+  }
+  if (scans.state === 'error') return `<p class="muted">Переходы сейчас не прочитались: ${esc(scans.message)}.</p>`
+
+  const { codes, links, summary, recent } = scans
+  const byCode = new Map(links.map((link) => [link.code.toLowerCase(), link]))
+  const perLink = new Map((summary.links ?? []).map((link) => [link.code.toLowerCase(), link]))
+  const last = (at) => {
+    if (!at) return '—'
+    const t = msk(at)
+    return `${t.day} ${t.time.slice(0, 5)}`
+  }
+
+  // Итоги: порядок — как в списке кодов, а не по числу сканирований.
+  const totalRows = codes.map((code) => {
+    const link = byCode.get(code.toLowerCase())
+    if (!link) return `<tr><td>${esc(code)}</td><td class="wrap muted" colspan="5">нет в QR-сервисе</td></tr>`
+    const today = perLink.get(code.toLowerCase())?.totals?.today ?? 0
+    const off = link.is_active ? '' : ' <span class="muted">(выключен)</span>'
+    return `<tr><td>${esc(link.code)}${off}</td><td class="wrap">${esc(link.title || '—')}</td>
+<td class="r">${num(link.scans)}</td><td class="r">${num(link.unique_visitors)}</td><td class="r">${num(today)}</td>
+<td>${last(link.last_click_at)}</td></tr>`
+  }).join('')
+  const sum = summary.totals ?? {}
+  const totalRow = `<tr><td><b>всего</b></td><td></td><td class="r"><b>${num(sum.scans) ?? 0}</b></td>
+<td class="r"><b>${num(sum.unique_visitors) ?? 0}</b></td><td class="r"><b>${num(sum.today) ?? 0}</b></td><td></td></tr>`
+
+  // По дням: только дни, когда сканировали; колонки — коды, которые есть в сервисе.
+  const shown = codes.filter((code) => perLink.has(code.toLowerCase()))
+  const daily = new Map(shown.map((code) =>
+    [code, new Map((perLink.get(code.toLowerCase()).daily ?? []).map((d) => [d.date, num(d.scans)]))]))
+  const days = (summary.daily ?? []).filter((d) => num(d.scans) > 0).map((d) => d.date).sort().reverse()
+  const allDays = new Map((summary.daily ?? []).map((d) => [d.date, num(d.scans)]))
+  const dayRows = days.map((day) => `<tr><td>${esc(day)}</td>${shown
+    .map((code) => `<td class="r">${daily.get(code).get(day) || '·'}</td>`).join('')}<td class="r"><b>${allDays.get(day)}</b></td></tr>`).join('')
+
+  const recentRows = recent.map((click) => {
+    const t = msk(click.created_at)
+    const device = [DEVICE[click.device] ?? click.device, click.os, click.browser].filter(Boolean).join(', ')
+    return `<tr><td>${t.day}</td><td>${t.time}</td><td>${esc(click.code)}</td><td>${esc(device)}</td></tr>`
+  }).join('')
+
+  return `<div class="scroll"><table><tr><th>код</th><th>название</th><th class="r">сканирований</th>
+<th class="r">уникальных</th><th class="r">сегодня</th><th>последнее</th></tr>${totalRows}${totalRow}</table></div>
+<h3>По дням</h3>
+${days.length ? `<div class="scroll"><table><tr><th>день</th>${shown.map((code) => `<th class="r">${esc(code)}</th>`).join('')}
+<th class="r">всего</th></tr>${dayRows}</table></div>` : '<p class="muted">Сканирований пока не было.</p>'}
+<h3>Последние сканирования</h3>
+${recent.length ? `<div class="scroll"><table><tr><th>дата</th><th>время</th><th>код</th><th>устройство</th></tr>${recentRows}</table></div>`
+  : '<p class="muted">Сканирований пока не было.</p>'}`
+}
+
 const STYLE = `
 @font-face{font-family:'VK Sans Display';font-weight:400;src:url('/fonts/VKSansDisplay-regular.woff2') format('woff2')}
 @font-face{font-family:'VK Sans Display';font-weight:600;src:url('/fonts/VKSansDisplay-demibold.woff2') format('woff2')}
@@ -170,6 +232,8 @@ body{margin:0;padding:28px 16px 48px;background:var(--void);color:var(--ink);
   font:15px/1.4 'VK Sans Display',-apple-system,'Helvetica Neue',sans-serif;max-width:1000px;margin-inline:auto}
 h1{font-size:26px;margin:0 0 4px;font-weight:600}
 h2{font-size:18px;margin:28px 0 10px;font-weight:600}
+h3{font-size:15px;margin:18px 0 8px;font-weight:600;color:var(--muted)}
+td.muted{color:var(--muted)}
 .muted{color:var(--muted);margin:0}
 nav{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 4px}
 nav a{color:var(--ink);text-decoration:none;padding:7px 14px;border-radius:999px;background:var(--accent)}
@@ -224,7 +288,7 @@ export function renderUnavailable(state) {
 <p class="muted">База статистики недоступна: ${esc(state)}. Строки с панели не теряются — она пришлёт их, когда база ответит.</p>`)
 }
 
-export function renderStats({ totals, errors, days, models = [], recent, clicks = null, qr = null }) {
+export function renderStats({ totals, errors, days, models = [], recent, clicks = null, qr = null, qrScans = null }) {
   const total = num(totals.total) ?? 0
   const now = msk(new Date())
 
@@ -271,10 +335,12 @@ export function renderStats({ totals, errors, days, models = [], recent, clicks 
 
   return page('Статистика генераций', `<div class="top"><h1>Статистика генераций</h1><a href="/stats/logout">выйти</a></div>
 <p class="muted">Время московское. Обновлено ${now.day} в ${now.time} — обновите страницу, чтобы увидеть новые.</p>
-<nav><a href="/stats.csv">Скачать CSV</a><a href="#qr">QR-коды</a></nav>
+<nav><a href="/stats.csv">Скачать CSV</a><a href="#qr-scans">Переходы по QR-кодам</a><a href="#qr">QR-коды</a></nav>
 <div class="cards">${cards}</div>${errorLine}
 <h2>Кнопки на странице стикера</h2>
 ${renderClicks(clicks)}
+<h2 id="qr-scans">Переходы по QR-кодам</h2>
+${renderQrScans(qrScans)}
 <h2>По дням</h2>
 ${dayKeys.length ? `<div class="scroll"><table><tr><th>день</th><th class="r">всего</th><th class="r">успех</th>
 <th class="r">ошибки</th><th class="r">прервано</th><th class="r">среднее, с</th>

@@ -44,6 +44,7 @@ import {
   renderUnavailable, signInCookie, signedIn, statsPageEnabled,
 } from './statspage.mjs'
 import { lighten, lightenState } from './lighten.mjs'
+import { readQrScans } from './qrscans.mjs'
 
 const PORT = Number(process.env.PORT ?? 8787)
 /** Задан — значит сервер публичный и адреса строим от домена, а не от IP. */
@@ -576,7 +577,10 @@ const server = createServer(async (req, res) => {
           'content-disposition': 'attachment; filename="generations.csv"',
         })
       }
-      return send(res, 200, renderStats(await readStats()), html)
+      // Переходы по QR-кодам — из QR-сервиса, параллельно с базой. Не ответил
+      // он — страница всё равно открывается, в разделе будет причина.
+      const [stats, qrScans] = await Promise.all([readStats(), readQrScans()])
+      return send(res, 200, renderStats({ ...stats, qrScans }), html)
     } catch (error) {
       console.error('[статистика] страница:', error?.message ?? error)
       return send(res, 503, renderUnavailable(`${statsState()}, подробности в логе сервера`), html)
