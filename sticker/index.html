@@ -9,7 +9,7 @@
      Android (Samsung Internet, MIUI, «затемнять сайты» в Chrome) берётся её
      перекрашивать — и заодно картинку. -->
 <meta name="color-scheme" content="dark">
-<title>Ваш маскот — MAX</title>
+<title>Твой маскот — MAX</title>
 <style>
   /* Шрифт — как на панели. Файлы лежат в sticker/fonts, сервер отдаёт их
      по /fonts/…; путь относительный, чтобы страница открывалась и из
@@ -69,11 +69,13 @@
   .spin{width:38px;height:38px;border:4px solid rgb(255 255 255/.18);border-top-color:#7a36ff;
     border-radius:50%;animation:r 900ms linear infinite}
   @keyframes r{to{transform:rotate(360deg)}}
-  .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;
-    padding:18px 20px;border:0;border-radius:999px;font:inherit;font-size:19px;font-weight:600;
-    color:#fff;cursor:pointer;text-decoration:none;margin-bottom:12px;letter-spacing:-.028em;
-    /* Длинная подпись («Создать стикер…») встаёт в две строки — по центру. */
-    text-align:center;line-height:1.25}
+  /* Кегль, начертание и высота — по макету (17 / medium / 62 px): так
+     «Создать стикер с цифровым аватаром» умещается в одну строку. */
+  .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:62px;
+    padding:18px 20px;border:0;border-radius:999px;font:inherit;font-size:17px;font-weight:500;
+    color:#fff;cursor:pointer;text-decoration:none;margin-bottom:12px;letter-spacing:-.03em;
+    /* На узком телефоне длинная подпись всё же встаёт в две строки — по центру. */
+    text-align:center;line-height:1.28}
   .primary{background:var(--brand)}
   .ghost{background:rgb(255 255 255/.09);border:1px solid rgb(255 255 255/.16)}
   .btn:disabled{opacity:.45}
@@ -101,26 +103,26 @@
      applyLang() из словаря ниже. -->
 <!-- Неразрывные пробелы после коротких слов и перед тире — чтобы «в», «и»,
      «на» не висели в конце строки. Переносы в макете стоят именно так. -->
-<h1 data-t="h1">Ваш <b>цифровой маскот</b></h1>
-<p class="lead" data-t="lead">Сохраните картинку и&nbsp;добавьте её аватаром в&nbsp;MAX&nbsp;— это пара минут</p>
+<h1 data-t="h1">Твой <b>цифровой маскот</b></h1>
+<p class="lead" data-t="lead">Сохрани картинку и&nbsp;добавь её аватаром в&nbsp;MAX&nbsp;— это пара минут</p>
 
 <div class="card"><div class="inner" id="frame"><div class="spin"></div></div></div>
 
 <button class="btn primary" id="save" disabled data-t="save">Сохранить картинку</button>
-<a class="btn ghost" id="bot" href="https://max.ru/stickers" target="_blank" rel="noopener" data-t="bot">Создать стикер с&nbsp;цифровым аватаром в&nbsp;MAX</a>
-<p class="hint" id="hint" data-t="hintDefault">Если кнопка не&nbsp;сработала&nbsp;— задержите палец на&nbsp;картинке и&nbsp;выберите «Сохранить в&nbsp;Фото»</p>
+<a class="btn ghost" id="bot" href="https://max.ru/stickers" target="_blank" rel="noopener" data-t="bot">Создать стикер с&nbsp;цифровым аватаром</a>
+<p class="hint" id="hint" data-t="hintDefault">Если кнопка не&nbsp;сработала&nbsp;— задержи палец на&nbsp;картинке и&nbsp;выбери «Сохранить в&nbsp;Фото»</p>
 
 <h2 data-t="h2">Как сделать стикер</h2>
 <ol>
-  <li data-t="step1"><b>Сохраните картинку</b> кнопкой выше&nbsp;— она попадёт в&nbsp;галерею телефона</li>
-  <li data-t="step2"><b>Откройте бот</b> кнопкой «Создать стикер» выше. Или найдите в&nbsp;поиске MAX
+  <li data-t="step1"><b>Сохрани картинку</b> кнопкой выше&nbsp;— она попадёт в&nbsp;галерею телефона</li>
+  <li data-t="step2"><b>Открой бот</b> кнопкой «Создать стикер» выше. Или найди в&nbsp;поиске MAX
       <b>«Стикеры в&nbsp;MAX»</b>&nbsp;— официальный бот&nbsp;с&nbsp;синей галочкой</li>
-  <li data-t="step3">Нажмите <b>«Начать»</b>, затем <b>«Создать набор»</b> и&nbsp;придумайте название</li>
-  <li data-t="step4"><b>Загрузите сохранённую картинку</b> из&nbsp;галереи и&nbsp;отправьте набор на&nbsp;проверку</li>
-  <li data-t="step5">Готово&nbsp;— набор появится у&nbsp;вас в&nbsp;стикерах, им можно делиться</li>
+  <li data-t="step3">Нажми <b>«Начать»</b>, затем <b>«Создать набор»</b> и&nbsp;придумай название</li>
+  <li data-t="step4"><b>Загрузи сохранённую картинку</b> из&nbsp;галереи и&nbsp;отправь набор на&nbsp;проверку</li>
+  <li data-t="step5">Готово&nbsp;— набор появится у&nbsp;тебя в&nbsp;стикерах, им можно делиться</li>
 </ol>
 
-<p class="note" data-t="note">Картинка уже подходит боту по&nbsp;формату и&nbsp;размеру, дорабатывать её не&nbsp;нужно. Ссылка временная и&nbsp;живёт только пока вы рядом с&nbsp;панелью&nbsp;— сохраните сейчас</p>
+<p class="note" data-t="note">Картинка уже подходит боту по&nbsp;формату и&nbsp;размеру, дорабатывать её не&nbsp;нужно. Ссылка временная и&nbsp;живёт только пока ты рядом с&nbsp;панелью&nbsp;— сохраняй сейчас</p>
 
 <script>
 (function () {
@@ -133,30 +135,30 @@
    */
   const TEXTS = {
     ru: {
-      title: 'Ваш маскот — MAX',
-      h1: 'Ваш <b>цифровой маскот</b>',
-      lead: 'Сохраните картинку и&nbsp;добавьте её аватаром в&nbsp;MAX&nbsp;— это пара минут',
+      title: 'Твой маскот — MAX',
+      h1: 'Твой <b>цифровой маскот</b>',
+      lead: 'Сохрани картинку и&nbsp;добавь её аватаром в&nbsp;MAX&nbsp;— это пара минут',
       save: 'Сохранить картинку',
-      bot: 'Создать стикер с&nbsp;цифровым аватаром в&nbsp;MAX',
+      bot: 'Создать стикер с&nbsp;цифровым аватаром',
       h2: 'Как сделать стикер',
-      step1: '<b>Сохраните картинку</b> кнопкой выше&nbsp;— она попадёт в&nbsp;галерею телефона',
-      step2: '<b>Откройте бот</b> кнопкой «Создать стикер» выше. Или найдите в&nbsp;поиске MAX ' +
+      step1: '<b>Сохрани картинку</b> кнопкой выше&nbsp;— она попадёт в&nbsp;галерею телефона',
+      step2: '<b>Открой бот</b> кнопкой «Создать стикер» выше. Или найди в&nbsp;поиске MAX ' +
              '<b>«Стикеры в&nbsp;MAX»</b>&nbsp;— официальный бот&nbsp;с&nbsp;синей галочкой',
-      step3: 'Нажмите <b>«Начать»</b>, затем <b>«Создать набор»</b> и&nbsp;придумайте название',
-      step4: '<b>Загрузите сохранённую картинку</b> из&nbsp;галереи и&nbsp;отправьте набор на&nbsp;проверку',
-      step5: 'Готово&nbsp;— набор появится у&nbsp;вас в&nbsp;стикерах, им можно делиться',
+      step3: 'Нажми <b>«Начать»</b>, затем <b>«Создать набор»</b> и&nbsp;придумай название',
+      step4: '<b>Загрузи сохранённую картинку</b> из&nbsp;галереи и&nbsp;отправь набор на&nbsp;проверку',
+      step5: 'Готово&nbsp;— набор появится у&nbsp;тебя в&nbsp;стикерах, им можно делиться',
       note: 'Картинка уже подходит боту по&nbsp;формату и&nbsp;размеру, дорабатывать её не&nbsp;нужно. ' +
-            'Ссылка временная и&nbsp;живёт только пока вы рядом с&nbsp;панелью&nbsp;— сохраните сейчас',
+            'Ссылка временная и&nbsp;живёт только пока ты рядом с&nbsp;панелью&nbsp;— сохраняй сейчас',
 
-      mascotAlt: 'Ваш маскот',
+      mascotAlt: 'Твой маскот',
       preparing: 'Готовим…',
       wait: 'Картинка ещё готовится&nbsp;— это занимает несколько секунд.',
-      errLink: 'Ссылка неполная&nbsp;— отсканируйте QR-код с&nbsp;экрана ещё раз.',
+      errLink: 'Ссылка неполная&nbsp;— отсканируй QR-код с&nbsp;экрана ещё раз.',
       errImage: 'Картинка недоступна&nbsp;— возможно, срок ссылки истёк.',
-      hintDefault: 'Если кнопка не&nbsp;сработала&nbsp;— задержите палец на&nbsp;картинке и&nbsp;выберите «Сохранить в&nbsp;Фото»',
-      hintShare: 'В&nbsp;меню выберите «Сохранить изображение»',
+      hintDefault: 'Если кнопка не&nbsp;сработала&nbsp;— задержи палец на&nbsp;картинке и&nbsp;выбери «Сохранить в&nbsp;Фото»',
+      hintShare: 'В&nbsp;меню выбери «Сохранить изображение»',
       hintSaved: 'Картинка сохранена в&nbsp;загрузки телефона',
-      hintNewTab: 'Картинка открылась в&nbsp;новой вкладке&nbsp;— задержите на&nbsp;ней палец и&nbsp;выберите «Сохранить в&nbsp;Фото»',
+      hintNewTab: 'Картинка открылась в&nbsp;новой вкладке&nbsp;— задержи на&nbsp;ней палец и&nbsp;выбери «Сохранить в&nbsp;Фото»',
     },
     en: {
       title: 'Your mascot — MAX',
